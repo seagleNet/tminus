@@ -16,8 +16,8 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 clap_mangen = "0.3.3"
 crossterm = "0.29"
-rand = "0.9"
-signal-hook = "0.3"
+rand = "0.10"
+signal-hook = "0.4"
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 unicode-width = "0.2"
 

@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyModifiers};
-use rand::seq::IndexedRandom;
+use rand::{RngExt, seq::IndexedRandom};
 
 use crate::{
     cli::{

@@ -4,7 +4,7 @@
 //! port `ttfx` (MIT, © 2026 37signals) — see LICENSE. Timelines are shortened
 //! so the clock stays readable.
 
-use rand::{Rng, seq::SliceRandom};
+use rand::{Rng, RngExt, seq::SliceRandom};
 
 use super::{Effect, max, reveal};
 use crate::{
