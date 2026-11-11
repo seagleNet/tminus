@@ -446,16 +446,19 @@ pub fn detect_omarchy(themes: &[Theme]) -> Option<usize> {
     find(themes, &omarchy_name()?)
 }
 
-/// Print the theme names, each in its own colors with swatches, when stdout is
-/// a color terminal. Otherwise print plain names, one per line, for scripts.
-pub fn print_list(themes: &[Theme], default: usize) {
+/// The theme names, each in its own colors with swatches, when stdout is a
+/// color terminal. Otherwise plain names, one per line, for scripts.
+pub fn list(themes: &[Theme], default: usize) -> String {
+    use std::fmt::Write;
     use std::io::IsTerminal;
     let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
+    let mut out = String::new();
     if !color {
         for t in themes {
-            println!("{}", t.name);
+            out += &t.name;
+            out.push('\n');
         }
-        return;
+        return out;
     }
     let fg = |c: Rgb| format!("\x1b[38;2;{};{};{}m", c.0, c.1, c.2);
     let width = themes.iter().map(|t| t.name.chars().count()).max().unwrap_or(0);
@@ -487,9 +490,10 @@ pub fn print_list(themes: &[Theme], default: usize) {
                 line += "  (custom)";
             }
         }
-        println!("{line}\x1b[0m");
+        let _ = writeln!(out, "{line}\x1b[0m");
     }
-    println!("\n* default (the active Omarchy theme if detected)");
+    out += "\n* default (the active Omarchy theme if detected)\n";
+    out
 }
 
 #[cfg(test)]

@@ -101,16 +101,14 @@ fn main() -> ExitCode {
     let default_theme = theme::detect_omarchy(&themes).unwrap_or(0);
 
     if cli.list_effects {
-        for kind in effects::Kind::value_variants() {
-            if let Some(v) = kind.to_possible_value() {
-                println!("{}", v.get_name());
-            }
-        }
-        return ExitCode::SUCCESS;
+        let names: String = effects::Kind::value_variants()
+            .iter()
+            .filter_map(|k| Some(format!("{}\n", k.to_possible_value()?.get_name())))
+            .collect();
+        return print_out(names.as_bytes());
     }
     if cli.list_themes {
-        theme::print_list(&themes, default_theme);
-        return ExitCode::SUCCESS;
+        return print_out(theme::list(&themes, default_theme).as_bytes());
     }
 
     let find_theme = |name: &str| {
