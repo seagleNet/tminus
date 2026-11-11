@@ -21,6 +21,19 @@ pub const KEYS: &[(&str, &str)] = &[
     ("q / esc", "quit"),
 ];
 
+/// Keys in `--demo` mode (keys not listed work as usual).
+pub const DEMO_KEYS: &[(&str, &str)] = &[
+    ("← / →", "previous / next theme"),
+    ("↑ / ↓", "previous / next effect (plays at once)"),
+    ("enter / e / space", "play the effect again"),
+    ("a", "auto: move on to the next effect after each one"),
+    ("f", "preview the final seconds and the flash at zero"),
+    ("r", "random effect"),
+    ("s", "switch title between large and small"),
+    ("h / ?", "show / hide this list of keys (q and esc close it too)"),
+    ("q / esc", "quit, printing the chosen --theme and --effect"),
+];
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, clap::ValueEnum)]
 pub enum TitleSize {
     Large,
@@ -117,7 +130,7 @@ pub struct Cli {
     /// How long to count down for. Several make a sequence (see below)
     #[arg(
         value_name = "DURATION",
-        required_unless_present_any = ["until", "list_effects", "list_themes"],
+        required_unless_present_any = ["until", "list_effects", "list_themes", "demo"],
         conflicts_with = "until"
     )]
     pub durations: Vec<String>,
@@ -292,6 +305,11 @@ pub struct Cli {
     /// List the available themes and exit
     #[arg(long)]
     pub list_themes: bool,
+
+    /// Browse themes and effects with a live preview (arrow keys; q prints
+    /// the choice). The clock shows DURATION, else 25:00
+    #[arg(long, conflicts_with = "until")]
+    pub demo: bool,
 }
 
 #[derive(Subcommand, Debug)]

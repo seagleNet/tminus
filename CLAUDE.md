@@ -43,6 +43,7 @@ MSRV job; it must stay green. `release.yml` runs on `v*` tags.
 - Spawned helpers (notify-send, `--sound`, `--exec`) are started immediately and only reaped on a thread, so they survive `--exit`.
 - Themes: built-ins are compile-time checked (`Rgb::hex`); all installed Omarchy themes (`$OMARCHY_PATH/themes`, `~/.config/omarchy/themes`, plus the active one in `$XDG_STATE_HOME/omarchy/current/theme` with `theme.name`; older Omarchy: `~/.config/omarchy/current`) are read from `colors.toml` (named keys: `red`, `blue`, `muted`, ...) / `alacritty.toml` / `kitty.conf` and replace same-named built-ins; config themes override all.
 - **Flashes fade to the terminal's real background**, queried at startup (`term::query_background`: OSC 11 plus a DA1 sentinel so non-supporting terminals don't stall, 300ms cap); the theme's `bg` is only the fallback. Skipped inside Neovim/Vim terminals (`$NVIM`, `$VIM_TERMINAL`): libvterm reports black, not what is drawn. Fading to a guessed color makes the last frame jump when the fill is dropped.
+- **`--demo`** (`app::Demo`) reuses the normal app: `effect_choices` returns the chosen kind, `next_replay` loops it, `f` swaps in a short `Timer` and `tick` restores the full one after the zero flash. No announce/exec/socket in demo; `run` takes `&mut App` so `main` can print the choice after `term::restore`.
 - Socket path: `$XDG_RUNTIME_DIR/tminus/<name>.<pid>.sock`, falling back to `/tmp/tminus-<uid>` when that path would exceed the ~108-byte socket limit.
 
 ## Effects and attribution

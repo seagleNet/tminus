@@ -166,6 +166,13 @@ With several timers running, give them names (`--name tea`) and pass the same
 `t- --help` lists every option; `--list-themes` and `--list-effects` show
 what's available.
 
+To see them, run `t- --demo`: a live clock showing one effect on repeat. `←`/`→`
+switch the theme, `↑`/`↓` the effect, `a` moves on to the next effect after each
+one, `r` picks a random effect, and `f` previews the final seconds and the flash
+at zero. `q` quits and prints your choice (`--theme nord --effect rain`) to
+paste into a command or the config. Other options apply as usual, so `t- --demo
+1:30:00 -f block -t focus` previews exactly that look.
+
 ## Configuration
 
 Defaults for any option can go in `~/.config/tminus/config.toml` (or

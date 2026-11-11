@@ -123,10 +123,14 @@ fn main() -> ExitCode {
     };
 
     let built = build_plan(&cli, &config.presets, &find_theme);
-    let (steps, timer) = match built {
+    let (mut steps, timer) = match built {
         Ok(b) => b,
         Err(e) => return fail(&e),
     };
+    if cli.demo {
+        // Only the first segment's clock is shown.
+        steps.truncate(1);
+    }
 
     // Intro and at-zero effects fall back to --effect when not given.
     let pool_or_default =
@@ -145,13 +149,14 @@ fn main() -> ExitCode {
 
     // Remote control is best effort for the TUI, but the point of --headless.
     let server = match Server::start(cli.name.as_deref().unwrap_or("tminus")) {
+        _ if cli.demo => None,
         Ok(s) => Some(s),
         Err(e) if cli.headless => return fail(&format!("can't open the control socket: {e}")),
         Err(_) => None,
     };
 
-    let app = App::new(&cli, pools, &themes, theme, steps, timer);
-    let result = if cli.headless {
+    let mut app = App::new(&cli, pools, &themes, theme, steps, timer);
+    let result = if cli.headless && !cli.demo {
         run_headless(&cli, app, server)
     } else {
         let prev_hook = std::panic::take_hook();
@@ -159,8 +164,11 @@ fn main() -> ExitCode {
             term::restore();
             prev_hook(info);
         }));
-        let r = run(&cli, app, server);
+        let r = run(&cli, &mut app, server);
         term::restore();
+        if let (Ok(_), Some((theme, effect))) = (&r, app.demo_choice()) {
+            return print_out(format!("--theme {theme} --effect {effect}\n").as_bytes());
+        }
         r
     };
     match result {
@@ -230,7 +238,13 @@ fn build_plan(
             timer,
         ));
     }
-    let steps = plan::parse(&cli.durations, presets)?
+    let demo_default = ["25m".to_string()];
+    let durations = if cli.demo && cli.durations.is_empty() {
+        &demo_default[..]
+    } else {
+        &cli.durations[..]
+    };
+    let steps = plan::parse(durations, presets)?
         .into_iter()
         .map(|s| {
             let theme = s.theme.as_deref().map(find_theme).transpose()?;
@@ -351,7 +365,7 @@ fn play_sound(file: &std::path::Path) {
 }
 
 /// Runs the TUI. Returns Ok(true) if the countdown completed.
-fn run(cli: &Cli, mut app: App, mut server: Option<Server>) -> std::io::Result<bool> {
+fn run(cli: &Cli, app: &mut App, mut server: Option<Server>) -> std::io::Result<bool> {
     let signalled = watch_signals()?;
     let mut term =
         Term::enter().map_err(|e| std::io::Error::new(e.kind(), format!("needs to run in a terminal ({e})")))?;
@@ -395,10 +409,12 @@ fn run(cli: &Cli, mut app: App, mut server: Option<Server>) -> std::io::Result<b
             term.invalidate();
         }
 
-        if serve(&mut server, &mut app, now) {
+        if serve(&mut server, app, now) {
             return Ok(app.completed());
         }
-        if let Some(event) = app.tick(now) {
+        if let Some(event) = app.tick(now)
+            && !cli.demo
+        {
             announce(cli, &event, Some(&mut term))?;
             if matches!(event, Event::Completed { .. }) && cli.exit {
                 return Ok(true);

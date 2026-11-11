@@ -8,7 +8,7 @@ use rand::{RngExt, seq::IndexedRandom};
 
 use crate::{
     cli::{
-        Cli, KEYS, StatusAlign, StatusPos, StatusTime, TitleSize, format_clock, format_coarse, format_ticks,
+        Cli, DEMO_KEYS, KEYS, StatusAlign, StatusPos, StatusTime, TitleSize, format_clock, format_coarse, format_ticks,
         parse_duration,
     },
     clock::Timer,
@@ -53,6 +53,72 @@ struct Pending {
     end_left: f64,
     /// How long it runs.
     dur: f64,
+}
+
+/// `--demo`: one effect at a time on a loop, chosen with the arrow keys.
+struct Demo {
+    /// Every effect (but `none`), in `--list-effects` order.
+    kinds: Vec<effects::Kind>,
+    /// Index into `kinds` of the effect being shown.
+    pick: usize,
+    /// Move on to the next effect after each one.
+    auto: bool,
+    /// The clock's normal duration, restored after a final-seconds preview.
+    full: Duration,
+}
+
+impl Demo {
+    /// Pause between replays of the effect.
+    const GAP: f64 = 1.2;
+
+    fn new(start: &[effects::Kind], full: Duration) -> Self {
+        use clap::ValueEnum;
+        let kinds: Vec<effects::Kind> = effects::Kind::value_variants()
+            .iter()
+            .copied()
+            .filter(|k| *k != effects::Kind::Off)
+            .collect();
+        let pick = start
+            .first()
+            .and_then(|k| kinds.iter().position(|x| x == k))
+            .unwrap_or(0);
+        Demo {
+            kinds,
+            pick,
+            auto: false,
+            full,
+        }
+    }
+
+    fn kind(&self) -> effects::Kind {
+        self.kinds[self.pick]
+    }
+
+    /// The effect's CLI name.
+    fn name(&self) -> String {
+        use clap::ValueEnum;
+        self.kind()
+            .to_possible_value()
+            .map(|v| v.get_name().to_string())
+            .unwrap_or_default()
+    }
+
+    fn step(&mut self, forward: bool) {
+        self.pick = cycle(self.pick, self.kinds.len(), forward);
+    }
+}
+
+/// One step from `i` around a list of `len`, either way.
+fn cycle(i: usize, len: usize, forward: bool) -> usize {
+    if forward { (i + 1) % len } else { (i + len - 1) % len }
+}
+
+/// A random index below `len` other than `i` (if there is another).
+fn random_other(rng: &mut impl rand::Rng, i: usize, len: usize) -> usize {
+    if len < 2 {
+        return i;
+    }
+    (i + rng.random_range(1..len)) % len
 }
 
 /// What a remote command asks of the main loop.
@@ -102,10 +168,13 @@ pub struct App<'a> {
     status_time: StatusTime,
     /// Whether the keybinding popup is open.
     help: bool,
+    /// Set in `--demo` mode.
+    demo: Option<Demo>,
 }
 
 impl<'a> App<'a> {
     pub fn new(cli: &'a Cli, pools: Pools, themes: &'a [Theme], theme: usize, plan: Vec<Step>, timer: Timer) -> Self {
+        let demo = cli.demo.then(|| Demo::new(&cli.effect, plan[0].dur));
         let mut app = App {
             cli,
             pools,
@@ -132,6 +201,7 @@ impl<'a> App<'a> {
             title_large: cli.title_size == TitleSize::Large,
             status_time: cli.status_time,
             help: false,
+            demo,
         };
         app.sample();
         app
@@ -166,6 +236,15 @@ impl<'a> App<'a> {
     /// Advance time: sample the clock and handle the current segment reaching zero.
     pub fn tick(&mut self, now: f64) -> Option<Event> {
         self.sample();
+        if let (Some(demo), Some(at)) = (&self.demo, self.finished_at)
+            && now - at > DONE_FLASH_FOR + 1.0
+        {
+            self.timer = Timer::new(demo.full);
+            self.finished_at = None;
+            self.next_effect_at = now;
+            self.sample();
+            return None;
+        }
         if self.finished_at.is_some() || !self.left.is_zero() {
             return None;
         }
@@ -242,6 +321,9 @@ impl<'a> App<'a> {
 
     /// Handle a key press. Returns true if the user asked to quit.
     pub fn on_key(&mut self, code: KeyCode, mods: KeyModifiers, now: f64) -> bool {
+        if self.demo.is_some() && !self.help && self.on_demo_key(code, now) {
+            return false;
+        }
         match code {
             KeyCode::Char('c') if mods.contains(KeyModifiers::CONTROL) => return true,
             KeyCode::Char('h' | '?') => self.help = !self.help,
@@ -270,6 +352,42 @@ impl<'a> App<'a> {
             _ => {}
         }
         false
+    }
+
+    /// Keys of `--demo` mode. Returns false for keys it leaves to `on_key`.
+    fn on_demo_key(&mut self, code: KeyCode, now: f64) -> bool {
+        let Some(demo) = &mut self.demo else { return false };
+        match code {
+            KeyCode::Left | KeyCode::Right => {
+                self.base_theme = cycle(self.theme, self.themes.len(), code == KeyCode::Right);
+                self.theme = self.base_theme;
+                return true;
+            }
+            KeyCode::Up | KeyCode::Down => demo.step(code == KeyCode::Down),
+            KeyCode::Char('a') => {
+                demo.auto = !demo.auto;
+                return true;
+            }
+            KeyCode::Char('r') => demo.pick = random_other(&mut rand::rng(), demo.pick, demo.kinds.len()),
+            KeyCode::Char('f') => {
+                // Count down through the final seconds from just before them.
+                self.timer = Timer::new(Duration::from_secs_f64(self.final_window() + 2.0));
+                self.finished_at = None;
+                self.sample();
+            }
+            KeyCode::Char('e' | ' ') | KeyCode::Enter => {}
+            _ => return false,
+        }
+        // Show the (new) effect right away, from the start.
+        self.effect = None;
+        self.effect_now(now);
+        true
+    }
+
+    /// In `--demo` mode: the chosen theme and effect, as their CLI names.
+    pub fn demo_choice(&self) -> Option<(String, String)> {
+        let demo = self.demo.as_ref()?;
+        Some((self.themes[self.theme].name.clone(), demo.name()))
     }
 
     /// Play an effect as soon as possible (aligned: on the next reachable mark).
@@ -366,6 +484,14 @@ impl<'a> App<'a> {
             (self.left.as_secs_f64() - self.final_window()) as f32
         }
         .min(cap);
+        if let Some(demo) = &self.demo {
+            let kind = demo.kind();
+            return if kind.max_duration() <= budget {
+                vec![kind]
+            } else {
+                vec![]
+            };
+        }
         let fits: Vec<effects::Kind> = self
             .pools
             .get(self.next_moment)
@@ -595,7 +721,9 @@ impl<'a> App<'a> {
                 self.pending = Some(p);
             }
         } else if self.effect.is_none() {
-            let aligned = cli.effect_align.filter(|_| self.finished_at.is_none());
+            let aligned = cli
+                .effect_align
+                .filter(|_| self.finished_at.is_none() && self.demo.is_none());
             let left = self.left.as_secs_f64();
             // In an aligned rhythm, pick shortly before the next mark; otherwise when due.
             let due = match (aligned, self.next_mark) {
@@ -651,10 +779,14 @@ impl<'a> App<'a> {
         if done {
             self.effect = None;
             self.next_effect_at = self.next_replay(now);
+            if let Some(demo) = self.demo.as_mut().filter(|d| d.auto) {
+                demo.step(true);
+            }
         }
 
         self.frame.bg = self.alert_bg(now);
         self.draw_footer(now, oy + th + 1, ox, tw);
+        self.draw_demo_bar();
         if self.help {
             self.draw_help();
         }
@@ -662,6 +794,9 @@ impl<'a> App<'a> {
 
     /// When the next periodic effect is due.
     fn next_replay(&self, now: f64) -> f64 {
+        if self.demo.is_some() {
+            return now + Demo::GAP;
+        }
         let every = if self.finished_at.is_some() {
             6.0
         } else {
@@ -778,7 +913,7 @@ impl<'a> App<'a> {
         let (left, right, row) = match self.cli.status_pos {
             StatusPos::Below => (ox, ox + tw, status_row),
             StatusPos::Top => (margin, sw - margin, 1),
-            StatusPos::Bottom => (margin, sw - margin, sh - 2),
+            StatusPos::Bottom => (margin, sw - margin, sh - 2 - self.edge_rows().1 + 2),
         };
         let w = str_width(&status);
         let x = match self.cli.status_align {
@@ -793,10 +928,11 @@ impl<'a> App<'a> {
     /// whatever is underneath (its blank interior hides the clock behind it).
     fn draw_help(&mut self) {
         let theme = &self.themes[self.theme];
-        let key_w = KEYS.iter().map(|(k, _)| str_width(k)).max().unwrap_or(0);
-        let desc_w = KEYS.iter().map(|(_, d)| str_width(d)).max().unwrap_or(0);
+        let keys = self.keys();
+        let key_w = keys.iter().map(|(k, _)| str_width(k)).max().unwrap_or(0);
+        let desc_w = keys.iter().map(|(_, d)| str_width(d)).max().unwrap_or(0);
         // Border + 2 padding on each side, 3 between columns; title row + gap + keys.
-        let (w, h) = (key_w + desc_w + 3 + 6, KEYS.len() as i32 + 4);
+        let (w, h) = (key_w + desc_w + 3 + 6, keys.len() as i32 + 4);
         if w > self.frame.w || h > self.frame.h {
             self.draw_help_compact(key_w);
             return;
@@ -821,9 +957,9 @@ impl<'a> App<'a> {
         }
         let title = " keys ";
         self.frame.text(x0 + (w - str_width(title)) / 2, y0, title, theme.flash);
-        for (i, (key, desc)) in KEYS.iter().enumerate() {
+        for (i, (key, desc)) in keys.iter().enumerate() {
             let y = y0 + 2 + i as i32;
-            let col = theme.gradient_at(i as f32 / KEYS.len() as f32 * 0.5);
+            let col = theme.gradient_at(i as f32 / keys.len() as f32 * 0.5);
             self.frame.text(x0 + 3, y, key, col);
             self.frame
                 .text(x0 + 3 + key_w + 3, y, desc, theme.flash.lerp(theme.dim, 0.35));
@@ -835,7 +971,8 @@ impl<'a> App<'a> {
     fn draw_help_compact(&mut self, key_w: i32) {
         let theme = &self.themes[self.theme];
         let (sw, sh) = (self.frame.w, self.frame.h);
-        let n = KEYS.len() as i32;
+        let keys = self.keys();
+        let n = keys.len() as i32;
         let y0 = ((sh - n) / 2).max(0);
         for y in y0..(y0 + n).min(sh) {
             for x in 0..sw {
@@ -844,7 +981,7 @@ impl<'a> App<'a> {
         }
         let desc_x = 1 + key_w + 2;
         let room = (sw - desc_x).max(0) as usize;
-        for (i, (key, desc)) in KEYS.iter().enumerate() {
+        for (i, (key, desc)) in keys.iter().enumerate() {
             let y = y0 + i as i32;
             self.frame.text(1, y, key, theme.gradient_at(i as f32 / n as f32 * 0.5));
             let desc: String = if desc.chars().count() > room {
@@ -856,12 +993,63 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Rows kept free at the (top, bottom) screen edge for an edge status line.
+    /// The keys the help popup lists.
+    fn keys(&self) -> &'static [(&'static str, &'static str)] {
+        if self.demo.is_some() { DEMO_KEYS } else { KEYS }
+    }
+
+    /// `--demo`'s control line at the bottom: theme and effect with their
+    /// keys, shortened to what fits.
+    fn draw_demo_bar(&mut self) {
+        let Some(demo) = &self.demo else { return };
+        let theme = &self.themes[self.theme];
+        let (key, label, value) = (theme.flash, theme.dim, theme.gradient_at(0.0));
+        let effect = demo.name();
+        let count = |i: usize, n: usize| format!(" {}/{n}", i + 1);
+        let mut parts: Vec<(String, Rgb)> = vec![
+            ("← → ".into(), key),
+            ("theme ".into(), label),
+            (theme.name.clone(), value),
+            (count(self.theme, self.themes.len()), label),
+            ("    ↑ ↓ ".into(), key),
+            ("effect ".into(), label),
+            (effect, theme.gradient_at(0.3)),
+            (count(demo.pick, demo.kinds.len()), label),
+        ];
+        let hints: [(String, Rgb); 8] = [
+            ("    enter ".into(), key),
+            ("replay  ".into(), label),
+            ("a ".into(), key),
+            (format!("auto {}  ", if demo.auto { "on" } else { "off" }), label),
+            ("f ".into(), key),
+            ("final seconds  ".into(), label),
+            ("r ".into(), key),
+            ("random effect  ·  h keys".into(), label),
+        ];
+        let width = |p: &[(String, Rgb)]| p.iter().map(|(t, _)| str_width(t)).sum::<i32>();
+        let sw = self.frame.w;
+        if width(&parts) + width(&hints) <= sw - 2 {
+            parts.extend(hints);
+        } else if width(&parts) > sw - 2 {
+            // Just the names.
+            parts = vec![parts[2].clone(), ("  ·  ".into(), label), parts[6].clone()];
+        }
+        let mut x = (sw - width(&parts)) / 2;
+        let y = self.frame.h - 2;
+        for (text, col) in parts {
+            self.frame.text(x, y, &text, col);
+            x += str_width(&text);
+        }
+    }
+
+    /// Rows kept free at the (top, bottom) screen edge for an edge status
+    /// line and `--demo`'s control line.
     fn edge_rows(&self) -> (i32, i32) {
+        let demo = if self.demo.is_some() { 2 } else { 0 };
         match self.cli.status_pos {
-            StatusPos::Below => (0, 0),
-            StatusPos::Top => (2, 0),
-            StatusPos::Bottom => (0, 2),
+            StatusPos::Below => (0, demo),
+            StatusPos::Top => (2, demo),
+            StatusPos::Bottom => (0, 2 + demo),
         }
     }
 
@@ -1033,6 +1221,53 @@ mod tests {
         assert_eq!(mark_after(&["--effect-align", "10", "--every", "0"], 1500.0), None);
         assert_eq!(mark_after(&["--effect-align", "10", "--every", "15"], 25.0), None);
         assert_eq!(mark_after(&["--every", "15"], 1500.0), None);
+    }
+
+    #[test]
+    fn demo_keys_pick_theme_and_effect() {
+        use effects::Kind;
+        let cli = Cli::try_parse_from(["t-", "--demo", "--effect", "rain"]).unwrap();
+        let themes = crate::theme::builtin();
+        let mut app = app_with(&cli, &themes, &[25]);
+        let key = |app: &mut App, code| assert!(!app.on_key(code, KeyModifiers::NONE, 1.0));
+        let kinds = app.demo.as_ref().unwrap().kinds.len();
+        assert_eq!(app.demo.as_ref().unwrap().kind(), Kind::Rain, "starts on --effect");
+        assert!(!app.demo.as_ref().unwrap().kinds.contains(&Kind::Off));
+
+        // Arrows wrap around both lists.
+        key(&mut app, KeyCode::Left);
+        assert_eq!(app.theme, themes.len() - 1);
+        key(&mut app, KeyCode::Right);
+        key(&mut app, KeyCode::Right);
+        assert_eq!(app.theme, 1);
+        key(&mut app, KeyCode::Down);
+        assert_eq!(app.demo.as_ref().unwrap().kind(), Kind::Beams);
+        for _ in 0..kinds {
+            key(&mut app, KeyCode::Up);
+        }
+        assert_eq!(app.demo.as_ref().unwrap().kind(), Kind::Beams);
+        assert_eq!(app.effect_choices(f32::INFINITY), [Kind::Beams]);
+        assert_eq!(app.demo_choice(), Some((themes[1].name.clone(), "beams".to_string())));
+
+        // r picks another effect and keeps the theme.
+        key(&mut app, KeyCode::Char('r'));
+        assert_eq!(app.theme, 1);
+        assert_ne!(app.demo.as_ref().unwrap().pick, 2);
+        app.demo.as_mut().unwrap().pick = 2;
+
+        // f jumps to just before the final seconds; after zero it goes back.
+        key(&mut app, KeyCode::Char('f'));
+        assert_eq!(app.timer.total, Duration::from_secs(12));
+        app.timer = Timer::new(Duration::ZERO);
+        assert!(matches!(app.tick(2.0), Some(Event::Completed { .. })));
+        assert_eq!(app.tick(2.0 + DONE_FLASH_FOR + 1.5), None);
+        assert_eq!((app.timer.total, app.finished_at), (Duration::from_secs(25 * 60), None));
+
+        // Other keys work as usual; q still quits.
+        key(&mut app, KeyCode::Char('h'));
+        assert!(app.help);
+        key(&mut app, KeyCode::Char('q'));
+        assert!(app.on_key(KeyCode::Char('q'), KeyModifiers::NONE, 1.0));
     }
 
     #[test]
