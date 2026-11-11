@@ -9,8 +9,9 @@ readme = "README.md"
 keywords = ["countdown", "timer", "terminal", "tui", "cli"]
 categories = ["command-line-utilities"]
 repository = "https://github.com/seagleNet/tminus"
-# README recordings (vhs/render.sh) are for GitHub; keep the crate small.
-exclude = ["assets/", "vhs/"]
+# Only what building and the crates.io page need; recordings, CI, packaging
+# and repo notes stay on GitHub.
+include = ["src/", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
 
 [dependencies]
 chrono = "0.4"
