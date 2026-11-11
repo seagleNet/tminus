@@ -217,12 +217,13 @@ pub fn status(name: Option<&str>, follow: bool) -> io::Result<()> {
 }
 
 /// `t- ctl ...`: send a command and report the reply. Returns success.
-pub fn ctl(name: Option<&str>, command: &[String]) -> Result<(), String> {
+pub fn ctl(name: Option<&str>, command: &crate::cli::CtlCommand) -> Result<(), String> {
+    let line = command.line()?;
     let mut s = connect(name).ok_or_else(|| match name {
         Some(n) => format!("no running timer called `{n}`"),
         None => "no running timer".to_string(),
     })?;
-    let reply = request(&mut s, &command.join(" ")).map_err(|e| e.to_string())?;
+    let reply = request(&mut s, &line).map_err(|e| e.to_string())?;
     match reply.strip_prefix("error: ") {
         Some(e) => Err(e.to_string()),
         None => Ok(()),

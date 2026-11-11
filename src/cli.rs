@@ -324,22 +324,12 @@ pub enum Command {
         name: Option<String>,
     },
     /// Control a running timer
-    #[command(after_help = "\
-COMMANDS:
-  pause | resume | toggle      pause or resume
-  add <DURATION>               add time, e.g. `add 5m`
-  sub <DURATION>               remove time
-  restart                      restart the current segment
-  next | back                  next / previous segment of a sequence
-  effect                       play an effect now
-  stop                         quit the timer")]
     Ctl {
         /// Which timer, if several run [default: the most recently started]
-        #[arg(long)]
+        #[arg(long, global = true)]
         name: Option<String>,
-        /// The command, e.g. `toggle` or `add 5m`
-        #[arg(required = true, num_args = 1.., value_name = "COMMAND")]
-        command: Vec<String>,
+        #[command(subcommand)]
+        command: CtlCommand,
     },
     /// Print shell completions, e.g. `t- completions fish > ~/.config/fish/completions/t-.fish`
     Completions {
@@ -348,6 +338,63 @@ COMMANDS:
     },
     /// Print the man page, e.g. `t- man > ~/.local/share/man/man1/t-.1`
     Man,
+}
+
+/// What `t- ctl` asks a running timer to do.
+#[derive(Subcommand, Debug, PartialEq, Eq)]
+pub enum CtlCommand {
+    /// Pause the countdown
+    Pause,
+    /// Resume the countdown (or start the next segment when waiting)
+    Resume,
+    /// Pause or resume
+    Toggle,
+    /// Add time, e.g. `t- ctl add 5m`
+    Add {
+        /// How much, e.g. 5m, 90 or 1h30m
+        #[arg(required = true, num_args = 1.., value_name = "DURATION")]
+        duration: Vec<String>,
+    },
+    /// Remove time, e.g. `t- ctl sub 1m`
+    Sub {
+        /// How much, e.g. 5m, 90 or 1h30m
+        #[arg(required = true, num_args = 1.., value_name = "DURATION")]
+        duration: Vec<String>,
+    },
+    /// Restart the current segment
+    Restart,
+    /// Go to the next segment of a sequence
+    Next,
+    /// Go back to the previous segment of a sequence
+    Back,
+    /// Play an effect now
+    Effect,
+    /// Quit the timer
+    #[command(alias = "quit")]
+    Stop,
+}
+
+impl CtlCommand {
+    /// The line sent over the control socket (see `App::remote`). Durations
+    /// are checked here, so a typo is reported without touching the timer.
+    pub fn line(&self) -> Result<String, String> {
+        let with_duration = |cmd: &str, words: &[String]| {
+            let d = words.join(" ");
+            parse_duration(&d).map(|_| format!("{cmd} {d}"))
+        };
+        Ok(match self {
+            CtlCommand::Pause => "pause".into(),
+            CtlCommand::Resume => "resume".into(),
+            CtlCommand::Toggle => "toggle".into(),
+            CtlCommand::Add { duration } => with_duration("add", duration)?,
+            CtlCommand::Sub { duration } => with_duration("sub", duration)?,
+            CtlCommand::Restart => "restart".into(),
+            CtlCommand::Next => "next".into(),
+            CtlCommand::Back => "back".into(),
+            CtlCommand::Effect => "effect".into(),
+            CtlCommand::Stop => "stop".into(),
+        })
+    }
 }
 
 pub fn parse_duration(s: &str) -> Result<Duration, String> {
@@ -516,8 +563,23 @@ mod tests {
     fn subcommands_and_sequences_parse() {
         let cli = Cli::try_parse_from(["t-", "25m:work", "5m:break", "x4"]).unwrap();
         assert_eq!(cli.durations, ["25m:work", "5m:break", "x4"]);
-        let cli = Cli::try_parse_from(["t-", "ctl", "add", "5m"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::Ctl { ref command, .. }) if command == &["add", "5m"]));
+        let ctl = |args: &[&str]| match Cli::try_parse_from([&["t-", "ctl"], args].concat()).map(|c| c.command) {
+            Ok(Some(Command::Ctl { name, command })) => Ok((name, command.line())),
+            Ok(other) => panic!("{other:?}"),
+            Err(e) => Err(e.kind()),
+        };
+        assert_eq!(ctl(&["add", "5m"]), Ok((None, Ok("add 5m".into()))));
+        assert_eq!(ctl(&["add", "1h", "5m"]), Ok((None, Ok("add 1h 5m".into()))));
+        assert!(matches!(ctl(&["sub", "soon"]), Ok((None, Err(_)))));
+        // --name before or after the command; `quit` is `stop`.
+        let tea = Some("tea".to_string());
+        assert_eq!(
+            ctl(&["--name", "tea", "toggle"]),
+            Ok((tea.clone(), Ok("toggle".into())))
+        );
+        assert_eq!(ctl(&["quit", "--name", "tea"]), Ok((tea, Ok("stop".into()))));
+        assert_eq!(ctl(&["dance"]), Err(clap::error::ErrorKind::InvalidSubcommand));
+        assert_eq!(ctl(&["add"]), Err(clap::error::ErrorKind::MissingRequiredArgument));
         let cli = Cli::try_parse_from(["t-", "status", "--follow"]).unwrap();
         assert!(matches!(cli.command, Some(Command::Status { follow: true, .. })));
         let cli = Cli::try_parse_from(["t-", "completions", "fish"]).unwrap();
