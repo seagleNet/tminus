@@ -70,12 +70,14 @@ effects (highlight, colorshift, spotlights) are invisible in text snapshots.
 
 ## Release status
 
-- Private repo, CI green on Linux, macOS and MSRV. Not yet public, no tag yet.
-- Release: `gh repo edit seagleNet/tminus --visibility public --accept-visibility-change-consequences`,
-  then `git tag v0.1.0 && git push origin v0.1.0` (`release.yml` has never run yet),
-  then for the AUR `updpkgsums` + `makepkg --printsrcinfo > .SRCINFO` in `packaging/aur/`.
-- Never tested for real: Waybar/Hyprland
-  examples in the README, effects in a real color terminal at full speed,
-  running on macOS (CI only builds and tests it).
+- **0.1.0 is out** (2026-11-12): public repo, tag `v0.1.0` with GitHub release binaries
+  (`release.yml` works), published on crates.io (`cargo install tminus`).
+- Next release: bump `version` in Cargo.toml, tag `vX.Y.Z` (the push runs `release.yml`),
+  `cargo publish` from the tagged commit; bump the GIF URL tag in the README if re-recorded.
+- AUR: not submitted yet (registrations were closed). When it opens: `updpkgsums` +
+  `makepkg --printsrcinfo > .SRCINFO` in `packaging/aur/`.
+- Never tested for real: Waybar itself (current Omarchy has omarchy-shell instead; `t- status
+  --follow` was checked through a pipe), the Hyprland binds in the README, running on macOS
+  (CI only builds and tests it).
 - README GIFs: `vhs/render.sh` (tapes in `vhs/`, output `assets/`, needs vhs + gifsicle). Tapes use a fresh `HOME`, no Omarchy themes, and hidden aliases for flags; re-run after visible changes. The README links them by absolute URL pinned to a tag (`raw.githubusercontent.com/.../v0.1.0/assets/...`, so the crates.io page works); bump that tag when re-recording for a release.
 - Ideas not done: CHANGELOG.
