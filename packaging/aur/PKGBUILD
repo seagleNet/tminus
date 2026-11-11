@@ -1,0 +1,56 @@
+# Maintainer: seagle
+#
+# Before publishing to the AUR: after tagging a release, run `updpkgsums` to
+# fill in the checksum and `makepkg --printsrcinfo > .SRCINFO`.
+
+pkgname=tminus
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Countdown timer for the terminal with animated text effects, styled after Omarchy's screensaver"
+arch=('x86_64' 'aarch64')
+url="https://github.com/seagleNet/tminus"
+license=('MIT')
+depends=('gcc-libs' 'glibc')
+makedepends=('cargo')
+optdepends=(
+  'libnotify: desktop notifications with --notify'
+  'pipewire: sound playback with --sound (pw-play)'
+)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  local bin=target/release/t-
+  install -Dm755 "$bin" "$pkgdir/usr/bin/t-"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+
+  install -d "$pkgdir/usr/share/bash-completion/completions" \
+    "$pkgdir/usr/share/zsh/site-functions" \
+    "$pkgdir/usr/share/fish/vendor_completions.d" \
+    "$pkgdir/usr/share/man/man1"
+  "$bin" completions bash > "$pkgdir/usr/share/bash-completion/completions/t-"
+  "$bin" completions zsh > "$pkgdir/usr/share/zsh/site-functions/_t-"
+  "$bin" completions fish > "$pkgdir/usr/share/fish/vendor_completions.d/t-.fish"
+  "$bin" man > "$pkgdir/usr/share/man/man1/t-.1"
+}

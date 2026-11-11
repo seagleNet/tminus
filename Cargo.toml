@@ -1,0 +1,48 @@
+[package]
+name = "tminus"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A countdown timer for the terminal with animated text effects, styled after Omarchy's screensaver"
+license = "MIT"
+readme = "README.md"
+keywords = ["countdown", "timer", "terminal", "tui", "cli"]
+categories = ["command-line-utilities"]
+repository = "https://github.com/seagleNet/tminus"
+
+[dependencies]
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+clap_mangen = "0.3.3"
+crossterm = "0.29"
+rand = "0.9"
+signal-hook = "0.3"
+toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
+unicode-width = "0.2"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Animation math constantly converts between small screen coordinates (i32/usize)
+# and f32 time/positions; the values never approach the limits these lints guard.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+# r/c/x/y/t/p are the conventional names in grid and easing code.
+many_single_char_names = "allow"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+chrono-tz = "0.10"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[[bin]]
+name = "t-"
+path = "src/main.rs"
