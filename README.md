@@ -30,9 +30,9 @@ that replay every so often.
   most a few seconds each so the clock stays readable. `matrix-heavy` is a
   denser full-screen matrix you can pick with `--effect`.
   Digits also scramble briefly as they tick.
-- **Themes**: on Omarchy, the colors of your active theme (read from its
-  files, so custom themes work too); built-in versions of the stock themes;
-  and your own.
+- **Themes**: on Omarchy, every installed theme with its real colors (read
+  from its files, so custom themes work too), defaulting to the active one;
+  built-in versions of the stock themes elsewhere; and your own.
 - **Final-seconds alert**: the background pulses with each tick, and big effects
   pause so the seconds stay readable. Effects only start if they'll finish
   before then, so short timers get short effects (a 10-second one gets none).
@@ -212,7 +212,7 @@ alert = "#ffab40"
 ```
 
 Missing colors are derived from the gradient (or taken from `base`). A custom
-theme with a built-in's name replaces it, and one named after your Omarchy theme
+theme with a built-in's name replaces it, and one named after an Omarchy theme
 takes precedence over the colors read from that theme's files. Custom themes show up
 in `--list-themes` and when cycling with `t`.
 

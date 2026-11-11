@@ -74,7 +74,7 @@ pub struct Theme {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Origin {
     Builtin,
-    /// Read from the active Omarchy theme's files.
+    /// Read from an installed Omarchy theme's files.
     Omarchy,
     /// Defined in the config file.
     Config,
@@ -114,18 +114,34 @@ macro_rules! theme {
 }
 
 // name, gradient, dim, flash, bg, alert
+// tokyo-night first (the default off Omarchy), then the other Omarchy stock
+// themes alphabetically, then themes that aren't (or no longer are) stock.
 #[rustfmt::skip]
 static BUILTIN: &[Builtin] = &[
     theme!("tokyo-night", ["#7aa2f7", "#bb9af7", "#f7768e", "#7dcfff"], "#565f89", "#c0caf5", "#1a1b26", "#f7768e"),
     theme!("catppuccin", ["#89b4fa", "#cba6f7", "#f5c2e7", "#94e2d5"], "#6c7086", "#cdd6f4", "#1e1e2e", "#f38ba8"),
-    theme!("gruvbox", ["#fabd2f", "#fe8019", "#fb4934", "#b8bb26"], "#928374", "#fbf1c7", "#282828", "#fb4934"),
-    theme!("nord", ["#88c0d0", "#81a1c1", "#5e81ac", "#8fbcbb"], "#4c566a", "#eceff4", "#2e3440", "#bf616a"),
+    theme!("catppuccin-latte", ["#1e66f5", "#ea76cb", "#d20f39", "#179299"], "#acb0be", "#4c4f69", "#eff1f5", "#d20f39"),
+    theme!("ethereal", ["#7d82d9", "#c89dc1", "#ed5b5a", "#a3bfd1"], "#6d7db6", "#ffcead", "#060b1e", "#ed5b5a"),
     theme!("everforest", ["#a7c080", "#83c092", "#7fbbb3", "#dbbc7f"], "#859289", "#d3c6aa", "#2d353b", "#e67e80"),
+    theme!("flexoki-light", ["#205ea6", "#ce5d97", "#d14d41", "#3aa99f"], "#b7b5ac", "#100f0f", "#fffcf0", "#d14d41"),
+    theme!("gruvbox", ["#fabd2f", "#fe8019", "#fb4934", "#b8bb26"], "#928374", "#fbf1c7", "#282828", "#fb4934"),
+    theme!("hackerman", ["#829dd4", "#86a7df", "#50f872", "#7cf8f7"], "#2d3450", "#ddf7ff", "#0b0c16", "#50f872"),
+    theme!("jade-horse", ["#96b7d0", "#b7a1c8", "#d88d91", "#86c7c5"], "#64887b", "#dfede5", "#142620", "#d88d91"),
     theme!("kanagawa", ["#7e9cd8", "#957fb8", "#d27e99", "#7aa89f"], "#727169", "#dcd7ba", "#1f1f28", "#e82424"),
-    theme!("rose-pine", ["#ebbcba", "#c4a7e7", "#9ccfd8", "#f6c177"], "#6e6a86", "#e0def4", "#191724", "#eb6f92"),
+    theme!("last-horizon", ["#b59790", "#c4d8e2", "#c38b7b", "#a5a0b6"], "#584e51", "#fafcfb", "#0c0b0c", "#c38b7b"),
+    theme!("lumon", ["#6fb8e3", "#8bc9eb", "#4d86b0", "#b4e4f6"], "#304860", "#d6e2ee", "#16242d", "#4d86b0"),
+    theme!("lupine", ["#3264eb", "#8a4ad7", "#c900c4", "#0c67de"], "#9e9e9e", "#212121", "#fafafa", "#c900c4"),
     theme!("matte-black", ["#eaeaea", "#8a8a8d", "#f59e0b", "#b91c1c"], "#5a5a5a", "#ffffff", "#121212", "#d35f5f"),
-    theme!("osaka-jade", ["#2dd5b7", "#549e6a", "#509475", "#e5c736"], "#53685b", "#d6dbd9", "#111c18", "#ff5345"),
+    theme!("miasma", ["#78824b", "#bb7744", "#685742", "#c9a554"], "#666666", "#c2c2b0", "#222222", "#685742"),
+    theme!("nord", ["#88c0d0", "#81a1c1", "#5e81ac", "#8fbcbb"], "#4c566a", "#eceff4", "#2e3440", "#bf616a"),
+    theme!("retro-82", ["#3f8f8a", "#3f8f8a", "#f85525", "#8cbfb8"], "#2a6b78", "#f6dcac", "#05182e", "#f85525"),
     theme!("ristretto", ["#f38d70", "#fd6883", "#adda78", "#f9cc6c"], "#72696a", "#e6d9db", "#2c2525", "#fd6883"),
+    theme!("rose-pine", ["#ebbcba", "#c4a7e7", "#9ccfd8", "#f6c177"], "#6e6a86", "#e0def4", "#191724", "#eb6f92"),
+    theme!("solitude", ["#798186", "#aeaeae", "#565d60", "#707070"], "#4b4e55", "#cacccc", "#101315", "#565d60"),
+    theme!("starship", ["#8fb8de", "#ff8fa3", "#ff5f4a", "#a6dcef"], "#8e8e93", "#f5f5f7", "#1c1c1e", "#ff5f4a"),
+    theme!("vantablack", ["#8d8d8d", "#9b9b9b", "#a4a4a4", "#b0b0b0"], "#7a7a7a", "#ffffff", "#000000", "#a4a4a4"),
+    theme!("white", ["#1a1a1a", "#2e2e2e", "#2a2a2a", "#3e3e3e"], "#808080", "#000000", "#ffffff", "#2a2a2a"),
+    theme!("osaka-jade", ["#2dd5b7", "#549e6a", "#509475", "#e5c736"], "#53685b", "#d6dbd9", "#111c18", "#ff5345"),
     theme!("matrix", ["#00ff41", "#008f11", "#00ff9c"], "#0b5d1e", "#d0ffd8", "#000000", "#ff2a2a"),
 ];
 
@@ -256,9 +272,17 @@ pub fn find(themes: &[Theme], name: &str) -> Option<usize> {
     themes.iter().position(|t| t.name == n)
 }
 
+/// Directory holding the active Omarchy theme (`theme/` and `theme.name`):
+/// `$XDG_STATE_HOME/omarchy/current` on current Omarchy, `~/.config/omarchy/current`
+/// on older versions.
 fn omarchy_current() -> Option<std::path::PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(std::path::Path::new(&home).join(".config/omarchy/current"))
+    let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
+        .map_or_else(|| home.join(".local/state"), std::path::PathBuf::from);
+    [state.join("omarchy/current"), home.join(".config/omarchy/current")]
+        .into_iter()
+        .find(|d| d.join("theme").is_dir())
 }
 
 /// The active Omarchy theme's name.
@@ -271,18 +295,57 @@ fn omarchy_name() -> Option<String> {
     Some(link.file_name()?.to_str()?.to_string())
 }
 
-/// The active Omarchy theme with its real colors, read from its terminal
-/// color files (`colors.toml`, `alacritty.toml` or `kitty.conf`), so any
-/// Omarchy theme, including custom ones, matches exactly.
-pub fn from_omarchy() -> Option<Theme> {
-    let dir = omarchy_current()?.join("theme");
-    let name = omarchy_name()?;
+/// A theme from an Omarchy theme directory's color files (`colors.toml`,
+/// `alacritty.toml` or `kitty.conf`).
+fn from_omarchy_dir(dir: &std::path::Path, name: &str) -> Option<Theme> {
     let read = |f: &str| std::fs::read_to_string(dir.join(f)).ok();
     let palette = read("colors.toml")
         .and_then(|t| palette_from_keys(&flat_toml(&t)?))
         .or_else(|| read("alacritty.toml").and_then(|t| palette_from_alacritty(&t)))
         .or_else(|| read("kitty.conf").and_then(|t| palette_from_keys(&kitty_keys(&t))))?;
-    Some(palette.into_theme(&name))
+    Some(palette.into_theme(name))
+}
+
+/// All installed Omarchy themes with their real colors: the stock ones
+/// (`$OMARCHY_PATH/themes`), the user's (`~/.config/omarchy/themes`, which win
+/// over stock ones of the same name) and the active one, read from its
+/// generated files so it matches exactly even if it's installed elsewhere.
+pub fn from_omarchy() -> Vec<Theme> {
+    let mut themes: Vec<Theme> = Vec::new();
+    let mut add = |t: Theme| match themes.iter_mut().find(|x| x.name == t.name) {
+        Some(slot) => *slot = t,
+        None => themes.push(t),
+    };
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(p) = std::env::var_os("OMARCHY_PATH").filter(|v| !v.is_empty()) {
+        roots.push(std::path::PathBuf::from(p).join("themes"));
+    } else {
+        roots.push("/usr/share/omarchy/themes".into());
+        roots.extend(home.iter().map(|h| h.join(".local/share/omarchy/themes")));
+    }
+    roots.extend(home.iter().map(|h| h.join(".config/omarchy/themes")));
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        let mut dirs: Vec<_> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
+        dirs.sort();
+        for dir in dirs {
+            if let Some(t) = dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| from_omarchy_dir(&dir, n))
+            {
+                add(t);
+            }
+        }
+    }
+    let active = omarchy_current().zip(omarchy_name());
+    if let Some(t) = active.and_then(|(dir, name)| from_omarchy_dir(&dir.join("theme"), &name)) {
+        add(t);
+    }
+    themes
 }
 
 /// The terminal colors a theme is made from.
@@ -313,19 +376,21 @@ impl Palette {
     }
 }
 
-/// Palette from `color0`..`color15` / `background` / `foreground` keys (kitty
-/// and `colors.toml` style).
+/// Palette from `background` / `foreground` plus either named colors
+/// (`red`, `blue`, `muted`, ..., Omarchy's `colors.toml`) or `color0`..`color15`
+/// (kitty).
 fn palette_from_keys(keys: &std::collections::HashMap<String, String>) -> Option<Palette> {
     let c = |k: &str| keys.get(k).and_then(|v| Rgb::parse(v).ok());
+    let either = |name: &str, n: &str| c(name).or_else(|| c(n));
     Some(Palette {
-        bg: c("background").or_else(|| c("color0"))?,
-        fg: c("foreground").or_else(|| c("color7"))?,
-        gray: c("color8").or_else(|| c("color0"))?,
-        red: c("color1")?,
-        green: c("color2")?,
-        blue: c("color4")?,
-        magenta: c("color5")?,
-        cyan: c("color6")?,
+        bg: either("background", "color0")?,
+        fg: either("foreground", "color7")?,
+        gray: c("muted").or_else(|| c("color8")).or_else(|| c("color0"))?,
+        red: either("red", "color1")?,
+        green: either("green", "color2")?,
+        blue: either("blue", "color4")?,
+        magenta: either("magenta", "color5")?,
+        cyan: either("cyan", "color6")?,
     })
 }
 
@@ -415,7 +480,7 @@ pub fn print_list(themes: &[Theme], default: usize) {
             Origin::Builtin => {}
             Origin::Omarchy => {
                 line += &fg(t.dim);
-                line += "  (from your Omarchy theme)";
+                line += "  (Omarchy)";
             }
             Origin::Config => {
                 line += &fg(t.dim);
@@ -454,7 +519,7 @@ mod tests {
 
     #[test]
     fn custom_from_base_overrides_some_colors() {
-        let nord = &builtin()[3];
+        let nord = &builtin()[find(&builtin(), "nord").unwrap()];
         let t = custom(
             "my-nord",
             &table(
@@ -476,6 +541,28 @@ alert = "#00ff00""##,
         assert!(err(r#"gradient = ["red"]"#).contains("isn't a color"));
         assert!(err(r#"base = "nope""#).contains("no built-in theme"));
         assert!(err(r##"colour = "#000000""##).contains("unknown key"));
+    }
+
+    #[test]
+    fn palette_from_omarchy_colors_toml() {
+        // Format of Omarchy's colors.toml (named keys, extra ones ignored).
+        let colors = r##"mode = "dark"
+accent = "#ffc55b"
+muted = "#5e5263"
+background = "#1d1626"
+foreground = "#e8def4"
+red = "#f67389"
+green = "#b4d888"
+cyan = "#76cbee"
+blue = "#9aa2f3"
+magenta = "#c9a1f7"
+bright_red = "#fd95a7"
+"##;
+        let p = palette_from_keys(&flat_toml(colors).unwrap()).unwrap();
+        assert_eq!(p.gray, Rgb::hex("#5e5263"));
+        assert_eq!(p.red, Rgb::hex("#f67389"));
+        assert_eq!(p.blue, Rgb::hex("#9aa2f3"));
+        assert_eq!(p.bg, Rgb::hex("#1d1626"));
     }
 
     #[test]

@@ -41,7 +41,7 @@ MSRV job; it must stay green. `release.yml` runs on `v*` tags.
 - Timing: `Timer` (`total`, `elapsed()`) is sampled once per frame (`App::sample`); animation time is `f64` since start. The displayed time rounds *up*.
 - Rendering: colors within ±3 per channel count as unchanged when diffing (big output savings); wide chars take two cells (`WIDE_TAIL`). Idle frames drop to 20 fps unless something animates.
 - Spawned helpers (notify-send, `--sound`, `--exec`) are started immediately and only reaped on a thread, so they survive `--exit`.
-- Themes: built-ins are compile-time checked (`Rgb::hex`); the active Omarchy theme's colors are read from its `colors.toml` / `alacritty.toml` / `kitty.conf`; config themes override both.
+- Themes: built-ins are compile-time checked (`Rgb::hex`); all installed Omarchy themes (`$OMARCHY_PATH/themes`, `~/.config/omarchy/themes`, plus the active one in `$XDG_STATE_HOME/omarchy/current/theme` with `theme.name`; older Omarchy: `~/.config/omarchy/current`) are read from `colors.toml` (named keys: `red`, `blue`, `muted`, ...) / `alacritty.toml` / `kitty.conf` and replace same-named built-ins; config themes override all.
 - Socket path: `$XDG_RUNTIME_DIR/tminus/<name>.<pid>.sock`, falling back to `/tmp/tminus-<uid>` when that path would exceed the ~108-byte socket limit.
 
 ## Effects and attribution
@@ -69,7 +69,7 @@ effects (highlight, colorshift, spotlights) are invisible in text snapshots.
 - Release: `gh repo edit seagleNet/tminus --visibility public --accept-visibility-change-consequences`,
   then `git tag v0.1.0 && git push origin v0.1.0` (`release.yml` has never run yet),
   then for the AUR `updpkgsums` + `makepkg --printsrcinfo > .SRCINFO` in `packaging/aur/`.
-- Never tested for real: actual Omarchy theme files (format assumed), Waybar/Hyprland
+- Never tested for real: Waybar/Hyprland
   examples in the README, effects in a real color terminal at full speed, zsh
   completions, running on macOS (CI only builds and tests it).
 - Ideas not done: README demo recording (vhs), CHANGELOG.

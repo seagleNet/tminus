@@ -95,8 +95,8 @@ fn main() -> ExitCode {
     }
 
     let mut themes = theme::builtin();
-    // Real colors of the active Omarchy theme, then config themes on top.
-    theme::merge(&mut themes, theme::from_omarchy().into_iter().collect());
+    // Real colors of the installed Omarchy themes, then config themes on top.
+    theme::merge(&mut themes, theme::from_omarchy());
     theme::merge(&mut themes, config.themes);
     let default_theme = theme::detect_omarchy(&themes).unwrap_or(0);
 
