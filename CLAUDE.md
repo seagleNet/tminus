@@ -75,4 +75,5 @@ effects (highlight, colorshift, spotlights) are invisible in text snapshots.
 - Never tested for real: Waybar/Hyprland
   examples in the README, effects in a real color terminal at full speed, zsh
   completions, running on macOS (CI only builds and tests it).
-- Ideas not done: README demo recording (vhs), CHANGELOG.
+- README GIFs: `vhs/render.sh` (tapes in `vhs/`, output `assets/`, needs vhs + gifsicle). Tapes use a fresh `HOME`, no Omarchy themes, and hidden aliases for flags; re-run after visible changes.
+- Ideas not done: CHANGELOG.

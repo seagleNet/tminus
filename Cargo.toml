@@ -9,6 +9,8 @@ readme = "README.md"
 keywords = ["countdown", "timer", "terminal", "tui", "cli"]
 categories = ["command-line-utilities"]
 repository = "https://github.com/seagleNet/tminus"
+# README recordings (vhs/render.sh) are for GitHub; keep the crate small.
+exclude = ["assets/", "vhs/"]
 
 [dependencies]
 chrono = "0.4"
