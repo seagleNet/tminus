@@ -4,7 +4,7 @@ A countdown timer for your terminal, styled after [Omarchy](https://omarchy.org)
 screensaver: big block digits in your theme's colors, with animated text effects
 that replay every so often.
 
-![tminus counting down from 25 minutes with the beams, burn and decrypt effects](assets/hero.gif)
+![tminus counting down from 25 minutes with the beams, burn and decrypt effects](https://raw.githubusercontent.com/seagleNet/tminus/v0.1.0/assets/hero.gif)
 
 ## Features
 
@@ -112,7 +112,7 @@ change rings the bell, flashes, and (with `--notify`) sends a notification.
 
 ## At zero
 
-![The final ten seconds of a timer: the background pulses red with each tick, then flashes at zero](assets/alert.gif)
+![The final ten seconds of a timer: the background pulses red with each tick, then flashes at zero](https://raw.githubusercontent.com/seagleNet/tminus/v0.1.0/assets/alert.gif)
 
 Besides the bell and the background flash, tminus can tell you in other ways,
 at the end and at every segment change of a sequence:
@@ -170,7 +170,7 @@ at zero. `q` quits and prints your choice (`--theme nord --effect rain`) to
 paste into a command or the config. Other options apply as usual, so `t- --demo
 1:30:00 -f block -t focus` previews exactly that look.
 
-![t- --demo switching between themes and effects with the arrow keys](assets/demo.gif)
+![t- --demo switching between themes and effects with the arrow keys](https://raw.githubusercontent.com/seagleNet/tminus/v0.1.0/assets/demo.gif)
 
 ## Configuration
 

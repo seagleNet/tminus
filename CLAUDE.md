@@ -77,5 +77,5 @@ effects (highlight, colorshift, spotlights) are invisible in text snapshots.
 - Never tested for real: Waybar/Hyprland
   examples in the README, effects in a real color terminal at full speed,
   running on macOS (CI only builds and tests it).
-- README GIFs: `vhs/render.sh` (tapes in `vhs/`, output `assets/`, needs vhs + gifsicle). Tapes use a fresh `HOME`, no Omarchy themes, and hidden aliases for flags; re-run after visible changes.
+- README GIFs: `vhs/render.sh` (tapes in `vhs/`, output `assets/`, needs vhs + gifsicle). Tapes use a fresh `HOME`, no Omarchy themes, and hidden aliases for flags; re-run after visible changes. The README links them by absolute URL pinned to a tag (`raw.githubusercontent.com/.../v0.1.0/assets/...`, so the crates.io page works); bump that tag when re-recording for a release.
 - Ideas not done: CHANGELOG.
