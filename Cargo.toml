@@ -15,7 +15,9 @@ exclude = ["assets/", "vhs/"]
 [dependencies]
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
-clap_complete = "4"
+# unstable-dynamic: completions call back into t- (see `CompleteEnv` in main).
+# Semver-exempt, so it is pinned to the minor version.
+clap_complete = { version = "~4.6", features = ["unstable-dynamic"] }
 clap_mangen = "0.3.3"
 crossterm = "0.29"
 rand = "0.10"

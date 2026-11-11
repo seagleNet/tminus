@@ -85,6 +85,12 @@ fn parse_cli() -> Result<(Cli, Config), ExitCode> {
 }
 
 fn main() -> ExitCode {
+    // `COMPLETE=<shell> t-` prints the shell's completion hook, and the hook
+    // calls back in here on every Tab; either way this exits before the
+    // config is read or anything else happens.
+    clap_complete::CompleteEnv::with_factory(Cli::command)
+        .bin(BIN)
+        .complete();
     let (cli, config) = match parse_cli() {
         Ok(parsed) => parsed,
         Err(code) => return code,
@@ -185,8 +191,24 @@ const BIN: &str = "t-";
 fn run_command(command: &Command) -> ExitCode {
     match command {
         Command::Completions { shell } => {
+            // The same hook `COMPLETE=<shell> t-` prints, for installing as a file.
+            let name = shell.to_string();
+            let shells = clap_complete::env::Shells::builtins();
+            let Some(completer) = shells.completer(&name) else {
+                return fail(&format!("no completions for {name}"));
+            };
             let mut buf = Vec::new();
-            clap_complete::generate(*shell, &mut Cli::command(), BIN, &mut buf);
+            if let Err(e) = completer.write_registration("COMPLETE", BIN, BIN, BIN, &mut buf) {
+                return fail(&e.to_string());
+            }
+            if name == "zsh" {
+                // Installed as an autoloaded `_t-` file (in $fpath), the first
+                // Tab only runs this file: complete right away, not just on the
+                // next Tab. Sourcing it (`source <(COMPLETE=zsh t-)`) is unaffected.
+                buf.extend_from_slice(
+                    b"\nif [[ \"${funcstack[1]}\" == _t- ]]; then\n    _clap_dynamic_completer_t_ \"$@\"\nfi\n",
+                );
+            }
             print_out(&buf)
         }
         Command::Man => {

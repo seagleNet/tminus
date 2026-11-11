@@ -16,7 +16,7 @@ pub struct Glyphs {
 pub enum FontKind {
     /// Pick the biggest font that fits.
     Auto,
-    /// figlet "ANSI Shadow" style, 6 rows.
+    /// figlet ANSI Shadow style, 6 rows.
     Shadow,
     /// Half-block pixel font, scaled up to fill the screen.
     Block,

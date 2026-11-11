@@ -174,7 +174,7 @@ pub struct Cli {
 
     /// Color theme, built in or defined in the config (see --list-themes)
     /// [default: the active Omarchy theme, else tokyo-night]
-    #[arg(long)]
+    #[arg(long, add = clap_complete::ArgValueCandidates::new(theme_candidates))]
     pub theme: Option<String>,
 
     /// Font for the clock face
@@ -397,6 +397,34 @@ impl CtlCommand {
     }
 }
 
+/// Shell completion for `--theme`: every theme `t-` knows here, i.e. the
+/// built-in ones, installed Omarchy themes and the default config's themes.
+fn theme_candidates() -> Vec<clap_complete::CompletionCandidate> {
+    use crate::theme::{self, Origin};
+    use clap::CommandFactory;
+    let mut themes = theme::builtin();
+    theme::merge(&mut themes, theme::from_omarchy());
+    if let Some(config) =
+        crate::config::default_path().and_then(|p| crate::config::load(&p, &Cli::command(), false).ok())
+    {
+        theme::merge(&mut themes, config.themes);
+    }
+    let active = theme::detect_omarchy(&themes);
+    themes
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let help = match t.origin {
+                _ if Some(i) == active => Some("your active Omarchy theme"),
+                Origin::Builtin => None,
+                Origin::Omarchy => Some("Omarchy"),
+                Origin::Config => Some("custom"),
+            };
+            clap_complete::CompletionCandidate::new(&t.name).help(help.map(Into::into))
+        })
+        .collect()
+}
+
 pub fn parse_duration(s: &str) -> Result<Duration, String> {
     let s = s.trim();
     let bad = || format!("can't understand duration {s:?} (try 90, 5m, 1h30m or 10:00)");
@@ -489,6 +517,39 @@ pub fn format_coarse(secs: u64) -> String {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+
+    /// Shell completion as the shells get it (`COMPLETE=<shell> t-`). The
+    /// engine is `clap_complete`'s semver-exempt `unstable-dynamic`, so this
+    /// guards against an update changing what users see.
+    #[test]
+    fn completions() {
+        let complete = |line: &str| -> Vec<String> {
+            let mut args: Vec<std::ffi::OsString> = line.split(' ').map(Into::into).collect();
+            let index = args.len() - 1;
+            args.insert(0, "t-".into());
+            clap_complete::engine::complete(&mut Cli::command(), args, index + 1, None)
+                .unwrap()
+                .iter()
+                .map(|c| c.get_value().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(complete("--fo"), ["--font"]);
+        assert_eq!(complete("--font "), ["auto", "shadow", "block", "plain"]);
+        // Options after several durations, and comma-separated lists.
+        assert!(complete("25m 5m --ef").contains(&"--effect".to_string()));
+        assert_eq!(complete("--effect rain,bu"), ["rain,burn", "rain,bubbles"]);
+        // Hidden opposite flags aren't offered.
+        assert!(!complete("--no-").contains(&"--no-bar".to_string()));
+        assert!(complete("--no-").contains(&"--no-bell".to_string()));
+        // Subcommands get their own options and values.
+        assert_eq!(complete("status --f"), ["--follow"]);
+        assert_eq!(complete("ctl t"), ["toggle"]);
+        assert!(complete("ctl ").contains(&"restart".to_string()));
+        assert!(!complete("ctl add ").contains(&"toggle".to_string()));
+        assert!(complete("completions ").contains(&"zsh".to_string()));
+        // Built-in themes (plus whatever is installed where the test runs).
+        assert!(complete("--theme no").contains(&"nord".to_string()));
+    }
 
     #[test]
     fn durations() {

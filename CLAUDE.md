@@ -44,6 +44,7 @@ MSRV job; it must stay green. `release.yml` runs on `v*` tags.
 - Themes: built-ins are compile-time checked (`Rgb::hex`); all installed Omarchy themes (`$OMARCHY_PATH/themes`, `~/.config/omarchy/themes`, plus the active one in `$XDG_STATE_HOME/omarchy/current/theme` with `theme.name`; older Omarchy: `~/.config/omarchy/current`) are read from `colors.toml` (named keys: `red`, `blue`, `muted`, ...) / `alacritty.toml` / `kitty.conf` and replace same-named built-ins; config themes override all.
 - **Flashes fade to the terminal's real background**, queried at startup (`term::query_background`: OSC 11 plus a DA1 sentinel so non-supporting terminals don't stall, 300ms cap); the theme's `bg` is only the fallback. Skipped inside Neovim/Vim terminals (`$NVIM`, `$VIM_TERMINAL`): libvterm reports black, not what is drawn. Fading to a guessed color makes the last frame jump when the fill is dropped.
 - **`--demo`** (`app::Demo`) reuses the normal app: `effect_choices` returns the chosen kind, `next_replay` loops it, `f` swaps in a short `Timer` and `tick` restores the full one after the zero flash. No announce/exec/socket in demo; `run` takes `&mut App` so `main` can print the choice after `term::restore`.
+- **Completions are dynamic** (`clap_complete` `unstable-dynamic`, pinned `~4.6`): `CompleteEnv` at the top of `main` answers `COMPLETE=<shell> t-`; `t- completions <shell>` prints the same hook (zsh gets a `funcstack` tail so it works autoloaded from `$fpath`). The static scripts broke on positional DURATION + subcommands. `--theme` has custom candidates (`cli::theme_candidates`); the `completions` test guards the engine.
 - **`t- ctl` words are subcommands** (`CtlCommand`, `--name` is global) for help and completion; `CtlCommand::line` turns them into the socket protocol's text line (`App::remote`), checking durations first. `--demo`/`--list-*` stay flags on purpose: subcommands don't get the config merged in.
 - Socket path: `$XDG_RUNTIME_DIR/tminus/<name>.<pid>.sock`, falling back to `/tmp/tminus-<uid>` when that path would exceed the ~108-byte socket limit.
 
@@ -74,7 +75,7 @@ effects (highlight, colorshift, spotlights) are invisible in text snapshots.
   then `git tag v0.1.0 && git push origin v0.1.0` (`release.yml` has never run yet),
   then for the AUR `updpkgsums` + `makepkg --printsrcinfo > .SRCINFO` in `packaging/aur/`.
 - Never tested for real: Waybar/Hyprland
-  examples in the README, effects in a real color terminal at full speed, zsh
-  completions, running on macOS (CI only builds and tests it).
+  examples in the README, effects in a real color terminal at full speed,
+  running on macOS (CI only builds and tests it).
 - README GIFs: `vhs/render.sh` (tapes in `vhs/`, output `assets/`, needs vhs + gifsicle). Tapes use a fresh `HOME`, no Omarchy themes, and hidden aliases for flags; re-run after visible changes.
 - Ideas not done: CHANGELOG.

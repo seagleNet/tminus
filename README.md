@@ -48,12 +48,19 @@ The command is called **`t-`** (as in T-minus).
   cargo install --path .
   ```
 
-Shell completions and the man page come from the binary itself:
+Shell completions and the man page come from the binary itself. Completions
+ask `t-` on each Tab, so they know your themes (built-in, Omarchy and config).
+Hook them up in your shell's startup file:
 
 ```sh
-t- completions fish > ~/.config/fish/completions/t-.fish   # or bash, zsh, elvish, powershell
+COMPLETE=fish t- | source            # fish: ~/.config/fish/completions/t-.fish
+source <(COMPLETE=zsh t-)            # zsh:  ~/.zshrc
+source <(COMPLETE=bash t-)           # bash: ~/.bashrc
 t- man > ~/.local/share/man/man1/t-.1
 ```
+
+`t- completions <shell>` prints the same hook as a file, as the packages
+install it.
 
 ## Usage
 
