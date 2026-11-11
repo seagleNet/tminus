@@ -66,6 +66,8 @@ pub struct App<'a> {
     pub cli: &'a Cli,
     pools: Pools,
     themes: &'a [Theme],
+    /// The terminal's own background, where the alert flash fades back to.
+    pub term_bg: Option<Rgb>,
     /// Index into `themes` currently shown.
     theme: usize,
     /// The theme chosen by the user, shown by segments without their own.
@@ -108,6 +110,7 @@ impl<'a> App<'a> {
             cli,
             pools,
             themes,
+            term_bg: None,
             theme: plan[0].theme.unwrap_or(theme),
             base_theme: theme,
             plan,
@@ -701,7 +704,10 @@ impl<'a> App<'a> {
             }
         };
         let k = (1.0 - since_pulse * 2.5).max(0.0);
-        (k > 0.0).then(|| theme.bg.lerp(theme.alert, k * k * strength))
+        // Fade back to the terminal's real background (if it told us), so the
+        // switch to "no fill" at the end of the pulse doesn't show.
+        let rest = self.term_bg.unwrap_or(theme.bg);
+        (k > 0.0).then(|| rest.lerp(theme.alert, k * k * strength))
     }
 
     /// Fraction of the progress bar to fill: this segment, or with

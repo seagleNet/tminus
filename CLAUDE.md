@@ -42,6 +42,7 @@ MSRV job; it must stay green. `release.yml` runs on `v*` tags.
 - Rendering: colors within ±3 per channel count as unchanged when diffing (big output savings); wide chars take two cells (`WIDE_TAIL`). Idle frames drop to 20 fps unless something animates.
 - Spawned helpers (notify-send, `--sound`, `--exec`) are started immediately and only reaped on a thread, so they survive `--exit`.
 - Themes: built-ins are compile-time checked (`Rgb::hex`); all installed Omarchy themes (`$OMARCHY_PATH/themes`, `~/.config/omarchy/themes`, plus the active one in `$XDG_STATE_HOME/omarchy/current/theme` with `theme.name`; older Omarchy: `~/.config/omarchy/current`) are read from `colors.toml` (named keys: `red`, `blue`, `muted`, ...) / `alacritty.toml` / `kitty.conf` and replace same-named built-ins; config themes override all.
+- **Flashes fade to the terminal's real background**, queried at startup (`term::query_background`: OSC 11 plus a DA1 sentinel so non-supporting terminals don't stall, 300ms cap); the theme's `bg` is only the fallback. Skipped inside Neovim/Vim terminals (`$NVIM`, `$VIM_TERMINAL`): libvterm reports black, not what is drawn. Fading to a guessed color makes the last frame jump when the fill is dropped.
 - Socket path: `$XDG_RUNTIME_DIR/tminus/<name>.<pid>.sock`, falling back to `/tmp/tminus-<uid>` when that path would exceed the ~108-byte socket limit.
 
 ## Effects and attribution
@@ -60,7 +61,8 @@ Run `t-` in a pty and render it with pyte (`uv run --with pyte python ...`):
 `pty.fork()`, set the size with `TIOCSWINSZ` and SIGWINCH, feed the output into
 `pyte.ByteStream`. Keep draining the pty (e.g. from a thread) while running other
 commands, or `t-` blocks writing and stops answering. Pass `--no-config` for
-reproducible runs. Use a *short* `XDG_RUNTIME_DIR` for socket tests. Color-only
+reproducible runs. Answer `ESC [ c` with e.g. `ESC [ ? 62 c` (and optionally
+`ESC ] 11 ; ?` with `ESC ] 11 ; rgb:0c0c/0c0c/0c0c ESC \`), or startup waits 300ms. Use a *short* `XDG_RUNTIME_DIR` for socket tests. Color-only
 effects (highlight, colorshift, spotlights) are invisible in text snapshots.
 
 ## Release status

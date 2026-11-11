@@ -110,6 +110,8 @@ pub struct Term {
     tty: std::fs::File,
     /// What the terminal currently shows (as last written by us).
     shown: Option<Frame>,
+    /// The terminal's own background color, if it told us.
+    background: Option<Rgb>,
 }
 
 impl Term {
@@ -122,12 +124,31 @@ impl Term {
             cursor::Hide,
             terminal::Clear(terminal::ClearType::All)
         )?;
+        #[cfg(unix)]
+        let tty = std::fs::File::open("/dev/tty")?;
+        // Neovim's (and Vim's) :terminal answer with libvterm's default,
+        // black, not the color they actually draw; the theme's guess is better.
+        #[cfg(unix)]
+        let background = if ["NVIM", "VIM_TERMINAL"].iter().any(|v| std::env::var_os(v).is_some()) {
+            None
+        } else {
+            query_background(&mut out, &tty)
+        };
+        #[cfg(not(unix))]
+        let background = None;
         Ok(Term {
             out,
             shown: None,
             #[cfg(unix)]
-            tty: std::fs::File::open("/dev/tty")?,
+            tty,
+            background,
         })
+    }
+
+    /// The terminal's background color, as it reported at startup. Fades to
+    /// "no fill" should end on this, or they visibly jump at the last frame.
+    pub fn background(&self) -> Option<Rgb> {
+        self.background
     }
 
     /// Force a full repaint on the next `present` (e.g. after a resize).
@@ -253,8 +274,102 @@ impl Term {
     }
 }
 
+/// Ask the terminal for its background color (OSC 11). A device-attributes
+/// query (DA1) follows it: every terminal answers that, so we know when to
+/// stop waiting even if OSC 11 isn't supported. Both replies are read here,
+/// before crossterm's reader starts, so they never turn into key presses.
+#[cfg(unix)]
+fn query_background(out: &mut impl Write, tty: &std::fs::File) -> Option<Rgb> {
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    const WAIT: std::time::Duration = std::time::Duration::from_millis(300);
+    out.write_all(b"\x1b]11;?\x1b\\\x1b[c").ok()?;
+    out.flush().ok()?;
+    let deadline = std::time::Instant::now() + WAIT;
+    let mut reply = Vec::new();
+    let mut buf = [0u8; 256];
+    while !has_da1_reply(&reply) {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        let mut pfd = libc::pollfd {
+            fd: tty.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: `pfd` is a single valid, writable pollfd.
+        let n = unsafe { libc::poll(&raw mut pfd, 1, left.as_millis().max(1) as i32) };
+        if n <= 0 || pfd.revents & libc::POLLIN == 0 {
+            break;
+        }
+        match (&*tty).read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => reply.extend_from_slice(&buf[..n]),
+        }
+    }
+    parse_osc11(&reply)
+}
+
+/// Whether `bytes` contain a DA1 reply (`ESC [ ? ... c`).
+fn has_da1_reply(bytes: &[u8]) -> bool {
+    bytes.windows(3).enumerate().any(|(i, w)| {
+        w == b"\x1b[?"
+            && bytes[i + 3..]
+                .iter()
+                .find(|b| !(b.is_ascii_digit() || **b == b';'))
+                .is_some_and(|&b| b == b'c')
+    })
+}
+
+/// The color in an OSC 11 reply: `ESC ] 11 ; rgb:RRRR/GGGG/BBBB` (1 to 4 hex
+/// digits per channel; `rgba:` too), ended by BEL or ST.
+fn parse_osc11(bytes: &[u8]) -> Option<Rgb> {
+    let text = String::from_utf8_lossy(bytes);
+    let start = text.find("\x1b]11;")? + 5;
+    let rest = &text[start..];
+    let end = rest.find(['\x07', '\x1b']).unwrap_or(rest.len());
+    let spec = &rest[..end];
+    let spec = spec.strip_prefix("rgb:").or_else(|| spec.strip_prefix("rgba:"))?;
+    let mut channels = spec.split('/').map(|h| {
+        if h.is_empty() || h.len() > 4 {
+            return None;
+        }
+        let v = u32::from_str_radix(h, 16).ok()?;
+        let max = (1u32 << (4 * h.len())) - 1;
+        Some(((v * 255 + max / 2) / max) as u8)
+    });
+    Some(Rgb(channels.next()??, channels.next()??, channels.next()??))
+}
+
 pub fn restore() {
     let mut out = io::stdout();
     let _ = execute!(out, ResetColor, cursor::Show, terminal::LeaveAlternateScreen);
     let _ = terminal::disable_raw_mode();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_background_replies() {
+        let da1 = "\x1b[?62;22c";
+        assert_eq!(
+            parse_osc11(format!("\x1b]11;rgb:1d1d/1616/2626\x1b\\{da1}").as_bytes()),
+            Some(Rgb(0x1d, 0x16, 0x26))
+        );
+        assert_eq!(parse_osc11(b"\x1b]11;rgb:0c/0c/0c\x07"), Some(Rgb(12, 12, 12)));
+        assert_eq!(parse_osc11(b"\x1b]11;rgb:f/8/0\x07"), Some(Rgb(255, 136, 0)));
+        assert_eq!(
+            parse_osc11(b"\x1b]11;rgba:ffff/0000/0000/ffff\x07"),
+            Some(Rgb(255, 0, 0))
+        );
+        assert_eq!(parse_osc11(da1.as_bytes()), None);
+        assert_eq!(parse_osc11(b"\x1b]11;rgb:zz/00/00\x07"), None);
+        assert!(has_da1_reply(da1.as_bytes()));
+        assert!(has_da1_reply(b"junk\x1b]11;rgb:0/0/0\x07\x1b[?1;2c"));
+        assert!(!has_da1_reply(b"\x1b[?62;22"));
+        assert!(!has_da1_reply(b"\x1b]11;rgb:0/0/0\x07"));
+    }
 }

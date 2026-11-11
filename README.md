@@ -203,7 +203,8 @@ Define themes in the same file and pick them with `theme = "..."` or `--theme`:
 gradient = ["#ff7e5f", "#feb47b", "#ff6f91"]  # colors the clock cycles through
 dim   = "#6b5b6e"   # optional: secondary text and borders
 flash = "#fff4e6"   # optional: highlights in effects
-bg    = "#1d1520"   # optional: resting color of the final-seconds flash
+bg    = "#1d1520"   # optional: where the final-seconds flash fades to if the
+                    # terminal doesn't report its background
 alert = "#ff3b3b"   # optional: final-seconds warning color
 
 [themes.my-nord]

@@ -355,6 +355,7 @@ fn run(cli: &Cli, mut app: App, mut server: Option<Server>) -> std::io::Result<b
     let signalled = watch_signals()?;
     let mut term =
         Term::enter().map_err(|e| std::io::Error::new(e.kind(), format!("needs to run in a terminal ({e})")))?;
+    app.term_bg = term.background();
     let mut rng = rand::rng();
     let epoch = Instant::now();
     let frame_dur = Duration::from_secs_f64(1.0 / f64::from(cli.fps));
