@@ -170,7 +170,8 @@ that's already in use is refused), else the preset's (`t- @pomodoro` →
 else a random one like `steady-comet`. Headless timers print theirs when they
 start, `t- ctl list` shows them all, and the status tooltip ends with it.
 Pass `-n NAME` to `t- ctl` to pick one; without it, `t- ctl` acts on the newest
-timer (marked `*` in the list).
+timer (marked `*` in the list) and says which one it reached
+(`paused pomodoro (pid 4242)`).
 
 `t- --help` lists every option; `--list-themes` and `--list-effects` show
 what's available.

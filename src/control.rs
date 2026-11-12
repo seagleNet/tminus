@@ -272,9 +272,14 @@ fn sockets(name: Option<&str>) -> Vec<PathBuf> {
 /// Connect to the newest live timer (named `name`, if given). Sockets left
 /// behind by timers that died are removed on the way.
 pub fn connect(name: Option<&str>) -> Option<UnixStream> {
+    connect_path(name).map(|(s, _)| s)
+}
+
+/// `connect`, also returning the socket's path (which names the timer).
+fn connect_path(name: Option<&str>) -> Option<(UnixStream, PathBuf)> {
     for path in sockets(name) {
         match UnixStream::connect(&path) {
-            Ok(s) => return Some(s),
+            Ok(s) => return Some((s, path)),
             Err(_) => {
                 let _ = std::fs::remove_file(&path);
             }
@@ -524,15 +529,19 @@ pub fn ctl(name: Option<&str>, command: &crate::cli::CtlCommand) -> Result<(), S
         };
     }
     let line = command.line()?;
-    let mut s = connect(name).ok_or_else(|| match name {
+    let (mut s, path) = connect_path(name).ok_or_else(|| match name {
         Some(n) => format!("no running timer called `{n}`"),
         None => "no running timer".to_string(),
     })?;
     let reply = request(&mut s, &line).map_err(|e| e.to_string())?;
-    match reply.strip_prefix("error: ") {
-        Some(e) => Err(e.to_string()),
-        None => Ok(()),
+    if let Some(e) = reply.strip_prefix("error: ") {
+        return Err(e.to_string());
     }
+    // Say which timer it reached: without --name, the newest of maybe several.
+    if let Some((timer, pid)) = sock_name_and_pid(&path) {
+        println!("{} (pid {pid})", command.done(&timer));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

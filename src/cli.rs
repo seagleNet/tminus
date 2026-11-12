@@ -400,6 +400,23 @@ pub enum CtlCommand {
 }
 
 impl CtlCommand {
+    /// What a single-timer command did to `timer`, for its reply line.
+    pub fn done(&self, timer: &str) -> String {
+        match self {
+            CtlCommand::Pause { .. } => format!("paused {timer}"),
+            CtlCommand::Resume { .. } => format!("resumed {timer}"),
+            CtlCommand::Toggle => format!("toggled {timer}"),
+            CtlCommand::Add { duration } => format!("added {} to {timer}", duration.join(" ")),
+            CtlCommand::Sub { duration } => format!("took {} off {timer}", duration.join(" ")),
+            CtlCommand::Restart => format!("restarted {timer}"),
+            CtlCommand::Next => format!("{timer}: next segment"),
+            CtlCommand::Back => format!("{timer}: previous segment"),
+            CtlCommand::Effect => format!("{timer}: playing an effect"),
+            CtlCommand::Stop { .. } => format!("stopped {timer}"),
+            CtlCommand::Status { .. } | CtlCommand::List { .. } => timer.to_string(),
+        }
+    }
+
     /// The line sent over the control socket (see `App::remote`). Durations
     /// are checked here, so a typo is reported without touching the timer.
     pub fn line(&self) -> Result<String, String> {
