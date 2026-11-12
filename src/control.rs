@@ -100,7 +100,7 @@ pub fn free_name(rng: &mut impl rand::Rng, base: Option<&str>) -> String {
 /// `free_name` with the "is this name in use?" check passed in.
 fn pick_name(rng: &mut impl rand::Rng, base: Option<&str>, taken: impl Fn(&str) -> bool) -> String {
     use rand::seq::IndexedRandom;
-    let base = base.map(sanitize);
+    let base = base.and_then(slug);
     if let Some(b) = &base
         && !taken(b)
     {
@@ -136,6 +136,23 @@ pub fn running_pid(name: &str) -> Option<u32> {
             None
         }
     })
+}
+
+/// A tidy timer name from free text such as a title: `Tea break` →
+/// `tea-break`. `None` when nothing usable is left. At most 32 characters.
+pub fn slug(text: &str) -> Option<String> {
+    let s = sanitize(text);
+    let mut out = String::new();
+    for part in s.split('-').filter(|p| !p.is_empty()) {
+        if out.len() + part.len() + 1 > 32 {
+            break;
+        }
+        if !out.is_empty() {
+            out.push('-');
+        }
+        out.push_str(part);
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// Socket names only use a safe subset of characters.
@@ -587,6 +604,18 @@ mod tests {
             Some(("focus".into(), 123))
         );
         assert_eq!(sock_name_and_pid(Path::new("/x/other")), None);
+    }
+
+    #[test]
+    fn slugs() {
+        assert_eq!(slug("Tea break").as_deref(), Some("tea-break"));
+        assert_eq!(slug("Deep Work").as_deref(), Some("deep-work"));
+        assert_eq!(slug("pomodoro").as_deref(), Some("pomodoro"));
+        assert_eq!(slug("!? --"), None);
+        assert_eq!(
+            slug("a very long title that goes on and on and on").as_deref(),
+            Some("a-very-long-title-that-goes-on")
+        );
     }
 
     #[test]

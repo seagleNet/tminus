@@ -169,8 +169,9 @@ that's taken, a mistyped option, no running timer) as desktop notifications.
 
 Every timer has a unique name: the one you give with `-n`/`--name` (a name
 that's already in use is refused), else the preset's (`t- @pomodoro` →
-`pomodoro`, then `eager-pomodoro`, …), else the config's `name` (the same way),
-else a random one like `steady-comet`. Headless timers print theirs when they
+`pomodoro`, then `eager-pomodoro`, …), else the title given with `-t`
+(`-t "Tea break"` → `tea-break`), else the config's `name` (the same way), else
+a random one like `steady-comet`. Headless timers print theirs when they
 start, `t- ctl list` shows them all, and the status tooltip ends with it.
 Pass `-n NAME` to `t- ctl` to pick one; without it, `t- ctl` acts on the newest
 timer (marked `*` in the list) and says which one it reached

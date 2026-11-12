@@ -190,26 +190,9 @@ fn main() -> ExitCode {
         return fail(&format!("sound file {} not found", f.display()));
     }
 
-    // Every timer has its own name, so `t- ctl --name` can reach each one.
-    // Unnamed ones get a random free one (`eager-comet`); a name that's taken
-    // is refused rather than shadowing the running timer.
-    let name = match &cli.name {
-        _ if cli.demo => None,
-        Some(n) => match control::running_pid(n) {
-            Some(pid) => {
-                return fail(&format!(
-                    "a timer called `{n}` is already running (pid {pid}); stop it with \
-                     `t- ctl stop -n {n}`, or pick another --name"
-                ));
-            }
-            None => Some(n.clone()),
-        },
-        // Named after the preset if one was used (`t- @pomodoro` → `pomodoro`),
-        // else the config's `name`, else a random one.
-        None => Some(control::free_name(
-            &mut rand::rng(),
-            first_preset(&cli.durations).or(config.name.as_deref()),
-        )),
+    let name = match timer_name(&cli, config.name.as_deref()) {
+        Ok(n) => n,
+        Err(e) => return fail(&e),
     };
     // Remote control is best effort for the TUI, but the point of --headless.
     let server = match name.as_deref().map(Server::start) {
@@ -301,6 +284,32 @@ fn print_out(bytes: &[u8]) -> ExitCode {
         Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(e) => fail(&e.to_string()),
     }
+}
+
+/// The name `t- ctl -n` will reach this timer by (none in --demo). Every
+/// timer has its own: an explicit --name that's taken is refused rather than
+/// shadowing the running timer. Unnamed ones are named after the preset
+/// (`t- @pomodoro` → `pomodoro`), else a title given on the command line,
+/// else the config's `name`, else at random (`eager-comet`); see `free_name`.
+fn timer_name(cli: &Cli, config_name: Option<&str>) -> Result<Option<String>, String> {
+    if cli.demo {
+        return Ok(None);
+    }
+    if let Some(n) = &cli.name {
+        return match control::running_pid(n) {
+            Some(pid) => Err(format!(
+                "a timer called `{n}` is already running (pid {pid}); stop it with \
+                 `t- ctl stop -n {n}`, or pick another --name"
+            )),
+            None => Ok(Some(n.clone())),
+        };
+    }
+    // `cli.title` may come from the config, where it would override the
+    // config's `name`, so only a title from the command line counts.
+    let cli_title = Cli::try_parse_from(std::env::args_os()).ok().and_then(|c| c.title);
+    let bases = [first_preset(&cli.durations), cli_title.as_deref(), config_name];
+    let base = bases.into_iter().flatten().find_map(control::slug);
+    Ok(Some(control::free_name(&mut rand::rng(), base.as_deref())))
 }
 
 /// The first `@preset` among the sequence tokens, if any.
@@ -581,10 +590,10 @@ mod tests {
 
     #[test]
     fn wide_chars_take_two_cells() {
-        let g = crate::font::plain("a☕b");
+        let g = crate::font::plain("a中b");
         assert_eq!(g.w, 4);
         assert_eq!(g.chars[2], crate::term::WIDE_TAIL);
-        assert_eq!(crate::term::str_width("café ☕"), 7);
+        assert_eq!(crate::term::str_width("café 中"), 7);
     }
 
     #[test]
