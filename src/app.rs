@@ -134,6 +134,8 @@ pub struct App<'a> {
     themes: &'a [Theme],
     /// The terminal's own background, where the alert flash fades back to.
     pub term_bg: Option<Rgb>,
+    /// The name `t- ctl -n` reaches this timer by (none in --demo).
+    pub name: Option<String>,
     /// Index into `themes` currently shown.
     theme: usize,
     /// The theme chosen by the user, shown by segments without their own.
@@ -180,6 +182,7 @@ impl<'a> App<'a> {
             pools,
             themes,
             term_bg: None,
+            name: None,
             theme: plan[0].theme.unwrap_or(theme),
             base_theme: theme,
             plan,
@@ -554,13 +557,17 @@ impl<'a> App<'a> {
         }
         tip.extend(self.upcoming_text());
         tip.extend(self.state_text());
+        // Last, to tell timers apart when several run (`t- ctl -n NAME`).
+        tip.extend(self.name.as_ref().map(|n| format!("name: {n}")));
         let pct = if self.timer.total.is_zero() {
             100
         } else {
             ((self.elapsed.as_secs_f64() / self.timer.total.as_secs_f64()).min(1.0) * 100.0).round() as u32
         };
+        // `name` isn't a Waybar field; Waybar ignores it, scripts can use it.
+        let name = self.name.as_deref().map_or("null".to_string(), json_str);
         format!(
-            r#"{{"text":{},"tooltip":{},"class":{},"alt":{},"percentage":{pct}}}"#,
+            r#"{{"text":{},"tooltip":{},"class":{},"alt":{},"percentage":{pct},"name":{name}}}"#,
             json_str(&text),
             json_str(&tip.join("\n")),
             json_str(class),
@@ -1179,6 +1186,10 @@ mod tests {
         assert_eq!(app.tick(0.0), None);
         assert_eq!(app.upcoming_text().as_deref(), Some("next: s1 2m"));
         assert!(app.status_json().contains(r"segment 1/2\nnext: s1 2m"));
+        assert!(app.status_json().ends_with(r#""name":null}"#));
+        app.name = Some("tea".into());
+        assert!(app.status_json().contains(r#"next: s1 2m\nname: tea","#));
+        assert!(app.status_json().ends_with(r#""name":"tea"}"#));
         assert_eq!(app.info_line(true), "headless\trunning\t01:00\ts0\t1/2");
         app.remote("sub 5m", 0.0).ok();
         assert_eq!(

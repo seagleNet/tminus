@@ -203,6 +203,7 @@ fn main() -> ExitCode {
     }
 
     let mut app = App::new(&cli, pools, &themes, theme, steps, timer);
+    app.name.clone_from(&name);
     let result = if cli.headless && !cli.demo {
         run_headless(&cli, app, server)
     } else {
