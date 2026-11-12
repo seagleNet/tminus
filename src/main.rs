@@ -14,7 +14,7 @@ mod util;
 use std::{
     collections::HashMap,
     ffi::OsString,
-    io::Write,
+    io::{IsTerminal, Write},
     process::ExitCode,
     sync::{
         Arc,
@@ -149,13 +149,37 @@ fn main() -> ExitCode {
         return fail(&format!("sound file {} not found", f.display()));
     }
 
-    // Remote control is best effort for the TUI, but the point of --headless.
-    let server = match Server::start(cli.name.as_deref().unwrap_or("tminus")) {
+    // Every timer has its own name, so `t- ctl --name` can reach each one.
+    // Unnamed ones get a random free one (`eager-comet`); a name that's taken
+    // is refused rather than shadowing the running timer.
+    let name = match &cli.name {
         _ if cli.demo => None,
-        Ok(s) => Some(s),
-        Err(e) if cli.headless => return fail(&format!("can't open the control socket: {e}")),
-        Err(_) => None,
+        Some(n) => match control::running_pid(n) {
+            Some(pid) => {
+                return fail(&format!(
+                    "a timer called `{n}` is already running (pid {pid}); stop it with \
+                     `t- ctl stop -n {n}`, or pick another --name"
+                ));
+            }
+            None => Some(n.clone()),
+        },
+        // Named after the preset if one was used (`t- @pomodoro` → `pomodoro`).
+        None => Some(control::free_name(&mut rand::rng(), first_preset(&cli.durations))),
     };
+    // Remote control is best effort for the TUI, but the point of --headless.
+    let server = match name.as_deref().map(Server::start) {
+        Some(Ok(s)) => Some(s),
+        Some(Err(e)) if cli.headless => return fail(&format!("can't open the control socket: {e}")),
+        None | Some(Err(_)) => None,
+    };
+    // A headless timer has no screen to show its generated name on.
+    if cli.headless
+        && cli.name.is_none()
+        && let Some(n) = &name
+        && std::io::stderr().is_terminal()
+    {
+        eprintln!("tminus: started as {n} (t- ctl list, t- ctl ... -n {n})");
+    }
 
     let mut app = App::new(&cli, pools, &themes, theme, steps, timer);
     let result = if cli.headless && !cli.demo {
@@ -237,6 +261,14 @@ fn print_out(bytes: &[u8]) -> ExitCode {
         Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(e) => fail(&e.to_string()),
     }
+}
+
+/// The first `@preset` among the sequence tokens, if any.
+fn first_preset(tokens: &[String]) -> Option<&str> {
+    tokens
+        .iter()
+        .find_map(|t| t.trim().strip_prefix('@'))
+        .filter(|p| !p.is_empty())
 }
 
 /// The plan: one or more segments, and the timer for the first.

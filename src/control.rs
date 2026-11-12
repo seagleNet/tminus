@@ -31,6 +31,113 @@ pub fn socket_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/tmp").join(format!("tminus-{}", unsafe { libc::getuid() })))
 }
 
+/// Words for the names of unnamed timers (`eager-comet`), like Docker's
+/// container names, with a launch-countdown theme.
+const ADJECTIVES: &[&str] = &[
+    "agile", "amber", "bold", "brave", "bright", "brisk", "calm", "clever", "cosmic", "crisp", "daring", "eager",
+    "early", "fearless", "fiery", "gentle", "golden", "grand", "happy", "keen", "lively", "lucid", "lunar", "mellow",
+    "mighty", "nimble", "noble", "patient", "polar", "proud", "quick", "quiet", "radiant", "rapid", "ready", "serene",
+    "sharp", "silent", "silver", "solar", "steady", "stellar", "swift", "tidy", "vivid", "warm", "wise", "zesty",
+];
+const NOUNS: &[&str] = &[
+    "apogee",
+    "asteroid",
+    "aurora",
+    "beacon",
+    "booster",
+    "capsule",
+    "comet",
+    "cosmos",
+    "countdown",
+    "eclipse",
+    "equinox",
+    "galaxy",
+    "gantry",
+    "horizon",
+    "ignition",
+    "lander",
+    "liftoff",
+    "meteor",
+    "module",
+    "moon",
+    "nebula",
+    "nova",
+    "orbit",
+    "payload",
+    "perigee",
+    "planet",
+    "probe",
+    "pulsar",
+    "quasar",
+    "rocket",
+    "rover",
+    "satellite",
+    "shuttle",
+    "signal",
+    "solstice",
+    "star",
+    "station",
+    "sunrise",
+    "telescope",
+    "thruster",
+    "trajectory",
+    "vector",
+    "voyager",
+    "zenith",
+    "launchpad",
+    "starlight",
+    "spacewalk",
+    "stardust",
+];
+
+/// A name no running timer has: `base` itself if given and free (a preset's
+/// name, e.g. `pomodoro`), else `base` with a random adjective
+/// (`eager-pomodoro`); without `base`, adjective and noun (`eager-comet`).
+pub fn free_name(rng: &mut impl rand::Rng, base: Option<&str>) -> String {
+    pick_name(rng, base, |name| running_pid(name).is_some())
+}
+
+/// `free_name` with the "is this name in use?" check passed in.
+fn pick_name(rng: &mut impl rand::Rng, base: Option<&str>, taken: impl Fn(&str) -> bool) -> String {
+    use rand::seq::IndexedRandom;
+    let base = base.map(sanitize);
+    if let Some(b) = &base
+        && !taken(b)
+    {
+        return b.clone();
+    }
+    let mut pick = || {
+        let adjective = ADJECTIVES.choose(rng).copied().unwrap_or("quick");
+        let noun = match &base {
+            Some(b) => b.as_str(),
+            None => NOUNS.choose(rng).copied().unwrap_or("timer"),
+        };
+        format!("{adjective}-{noun}")
+    };
+    // Enough combinations that 20 tries only fail with dozens of timers running.
+    for _ in 0..20 {
+        let name = pick();
+        if !taken(&name) {
+            return name;
+        }
+    }
+    format!("{}-{}", pick(), std::process::id())
+}
+
+/// The PID of a running timer called `name` (compared like socket names, so
+/// `Tea` is `tea`). Sockets of timers that died don't count and are removed.
+pub fn running_pid(name: &str) -> Option<u32> {
+    sockets(Some(name)).into_iter().find_map(|path| {
+        let (_, pid) = sock_name_and_pid(&path)?;
+        if UnixStream::connect(&path).is_ok() {
+            Some(pid)
+        } else {
+            let _ = std::fs::remove_file(&path);
+            None
+        }
+    })
+}
+
 /// Socket names only use a safe subset of characters.
 pub fn sanitize(name: &str) -> String {
     let s: String = name
@@ -389,6 +496,27 @@ mod tests {
             Some(("focus".into(), 123))
         );
         assert_eq!(sock_name_and_pid(Path::new("/x/other")), None);
+    }
+
+    #[test]
+    fn names_for_unnamed_timers() {
+        // Every generated name is already a valid socket name.
+        for words in [ADJECTIVES, NOUNS] {
+            for w in words {
+                assert_eq!(sanitize(w), *w);
+            }
+        }
+        let rng = &mut rand::rng();
+        let none_taken = |_: &str| false;
+        let name = pick_name(rng, None, none_taken);
+        let (adjective, noun) = name.split_once('-').unwrap();
+        assert!(ADJECTIVES.contains(&adjective) && NOUNS.contains(&noun), "{name}");
+        // A preset's name (made socket-safe) while it's free...
+        assert_eq!(pick_name(rng, Some("Deep Work"), none_taken), "deep-work");
+        // ...then with an adjective in front.
+        let name = pick_name(rng, Some("pomodoro"), |n| n == "pomodoro");
+        let (adjective, rest) = name.split_once('-').unwrap();
+        assert!(ADJECTIVES.contains(&adjective) && rest == "pomodoro", "{name}");
     }
 
     #[test]

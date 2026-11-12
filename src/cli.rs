@@ -284,8 +284,9 @@ pub struct Cli {
     #[arg(long, hide = true, overrides_with = "bar_total")]
     pub no_bar_total: bool,
 
-    /// Name for remote control (`t- ctl --name NAME ...`) [default: tminus]
-    #[arg(long)]
+    /// Name for remote control (`t- ctl -n NAME ...`); must not be in use
+    /// [default: the preset's name if free (pomodoro), else a random one like eager-comet]
+    #[arg(short, long)]
     pub name: Option<String>,
 
     /// Run without a screen, e.g. only shown in Waybar via `t- status --follow`
@@ -329,13 +330,13 @@ pub enum Command {
         #[arg(long)]
         follow: bool,
         /// Which timer, if several run [default: the most recently started]
-        #[arg(long)]
+        #[arg(short, long)]
         name: Option<String>,
     },
     /// Watch and control running timers: status, list, pause, add 5m, ...
     Ctl {
-        /// Which timer, if several run [default: the most recently started]
-        #[arg(long, global = true)]
+        /// Which timer, if several run (see `t- ctl list`) [default: the most recently started]
+        #[arg(short, long, global = true)]
         name: Option<String>,
         #[command(subcommand)]
         command: CtlCommand,
