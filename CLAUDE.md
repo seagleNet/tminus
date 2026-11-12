@@ -73,7 +73,7 @@ effects (highlight, colorshift, spotlights) are invisible in text snapshots.
 - **0.1.0 is out** (2026-11-12): public repo, tag `v0.1.0` with GitHub release binaries
   (`release.yml` works), published on crates.io (`cargo install tminus`).
 - Next release: bump `version` in Cargo.toml, tag `vX.Y.Z` (the push runs `release.yml`),
-  `cargo publish` from the tagged commit; bump the GIF URL tag in the README if re-recorded.
+  `cargo publish` from the tagged commit; bump the GIF URL tag in the README if re-recorded. `cargo publish`'s verify step builds the packaged copy into the shared `target/` and leaves `target/debug/t-` pointing at `target/package/` sources (edits then look "fresh"): run `cargo clean -p tminus` afterwards.
 - AUR: not submitted yet (registrations were closed). When it opens: `updpkgsums` +
   `makepkg --printsrcinfo > .SRCINFO` in `packaging/aur/`.
 - Never tested for real: Waybar itself (current Omarchy has omarchy-shell instead; `t- status
