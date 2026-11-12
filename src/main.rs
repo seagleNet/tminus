@@ -46,11 +46,27 @@ const IDLE_FRAME: Duration = Duration::from_millis(50);
 const HEADLESS_TICK: Duration = Duration::from_millis(100);
 
 fn fail(msg: &str) -> ExitCode {
-    eprintln!("tminus: {msg}");
+    report(msg);
     ExitCode::from(2)
 }
 
-/// Parse the command line, with config file values as defaults underneath it.
+/// Print an error, and also show it as a desktop notification when there's
+/// no terminal at all: started from a keybinding or a bar, stderr goes nowhere.
+fn report(msg: &str) {
+    eprintln!("tminus: {msg}");
+    if no_terminal() {
+        let mut c = std::process::Command::new("notify-send");
+        c.args(["tminus", msg]);
+        run_detached(c);
+    }
+}
+
+/// Neither stdin, stdout nor stderr is a terminal. A script that only
+/// redirects stderr still has one, so it doesn't get notifications.
+fn no_terminal() -> bool {
+    !std::io::stdin().is_terminal() && !std::io::stdout().is_terminal() && !std::io::stderr().is_terminal()
+}
+
 /// `t- status`, `t- pause -n tea`, ...: a `t- ctl` command typed without
 /// the `ctl` (0.1/0.2 had a top-level `status`). None of these words is a
 /// duration, so this never catches a real timer.
@@ -65,6 +81,7 @@ fn ctl_hint(argv: &[OsString]) -> Option<String> {
     ))
 }
 
+/// Parse the command line, with config file values as defaults underneath it.
 fn parse_cli() -> Result<(Cli, Config), ExitCode> {
     let argv: Vec<OsString> = std::env::args_os().collect();
     if let Some(hint) = ctl_hint(&argv) {
@@ -72,7 +89,14 @@ fn parse_cli() -> Result<(Cli, Config), ExitCode> {
     }
     // Parse once without the config: handles --help, finds --config/--no-config,
     // and means any error in the second parse must come from the config.
-    let cli = Cli::parse_from(&argv);
+    let cli = Cli::try_parse_from(&argv).unwrap_or_else(|e| {
+        // A bad option from a keybinding would otherwise fail silently.
+        if e.use_stderr() && no_terminal() {
+            let msg = e.to_string();
+            report(msg.lines().next().unwrap_or_default().trim_start_matches("error: "));
+        }
+        e.exit()
+    });
     // Subcommands (status, ctl) talk to a running timer; option defaults don't apply.
     if cli.no_config || cli.command.is_some() {
         return Ok((cli, Config::default()));
@@ -263,7 +287,7 @@ fn run_command(command: &Command) -> ExitCode {
         Command::Ctl { name, command } => match control::ctl(name.as_deref(), command) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
-                eprintln!("tminus: {e}");
+                report(&e);
                 ExitCode::from(1)
             }
         },

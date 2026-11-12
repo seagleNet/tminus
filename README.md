@@ -164,6 +164,9 @@ bind = SUPER, T, exec, t- 25m:work 5m:break x4 --headless --notify
 bind = SUPER SHIFT, T, exec, t- ctl toggle
 ```
 
+Run without any terminal like this, tminus also shows its errors (a name
+that's taken, a mistyped option, no running timer) as desktop notifications.
+
 Every timer has a unique name: the one you give with `-n`/`--name` (a name
 that's already in use is refused), else the preset's (`t- @pomodoro` →
 `pomodoro`, then `eager-pomodoro`, …), else the config's `name` (the same way),
