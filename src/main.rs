@@ -180,8 +180,12 @@ fn main() -> ExitCode {
             }
             None => Some(n.clone()),
         },
-        // Named after the preset if one was used (`t- @pomodoro` → `pomodoro`).
-        None => Some(control::free_name(&mut rand::rng(), first_preset(&cli.durations))),
+        // Named after the preset if one was used (`t- @pomodoro` → `pomodoro`),
+        // else the config's `name`, else a random one.
+        None => Some(control::free_name(
+            &mut rand::rng(),
+            first_preset(&cli.durations).or(config.name.as_deref()),
+        )),
     };
     // Remote control is best effort for the TUI, but the point of --headless.
     let server = match name.as_deref().map(Server::start) {

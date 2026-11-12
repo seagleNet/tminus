@@ -48,6 +48,10 @@ pub struct Config {
     pub themes: Vec<Theme>,
     /// Named sequences from the `[presets]` table, as command-line tokens.
     pub presets: HashMap<String, Vec<String>>,
+    /// `name`: a base name for timers started without --name. Unlike the
+    /// option it isn't exclusive (every run reads the config): it's used
+    /// as-is while free, else with an adjective (`eager-work`).
+    pub name: Option<String>,
 }
 
 /// Read `path`. A missing file is an empty config unless `required` is set.
@@ -73,6 +77,11 @@ fn parse(text: &str, cmd: &Command) -> Result<Config, String> {
             .collect::<Result<_, _>>()?,
         Some(_) => return Err("`themes` must be tables, like [themes.mine]".to_string()),
     };
+    let name = match table.remove("name") {
+        None => None,
+        Some(toml::Value::String(n)) if !n.trim().is_empty() => Some(n),
+        Some(_) => return Err("`name` must be a non-empty string, like name = \"work\"".to_string()),
+    };
     let presets = match table.remove("presets") {
         None => HashMap::new(),
         Some(toml::Value::Table(presets)) => presets
@@ -97,6 +106,7 @@ fn parse(text: &str, cmd: &Command) -> Result<Config, String> {
         args: to_args(&table, cmd)?,
         themes,
         presets,
+        name,
     })
 }
 
@@ -190,6 +200,18 @@ mod tests {
         assert_eq!(c.args, ["--theme", "sunset"]);
         let err = parse("[themes.bad]\ngradient = [\"nope\"]", &crate::cli::Cli::command()).unwrap_err();
         assert!(err.contains("theme `bad`"), "{err}");
+    }
+
+    #[test]
+    fn name_is_a_base_name_not_an_option() {
+        let c = parse("name = \"work\"", &crate::cli::Cli::command()).unwrap();
+        assert_eq!(c.name.as_deref(), Some("work"));
+        assert!(c.args.is_empty(), "not passed on as --name");
+        assert!(
+            parse("name = 3", &crate::cli::Cli::command())
+                .unwrap_err()
+                .contains("non-empty string")
+        );
     }
 
     #[test]
