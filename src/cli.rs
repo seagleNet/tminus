@@ -290,7 +290,7 @@ pub struct Cli {
     #[arg(short, long)]
     pub name: Option<String>,
 
-    /// Run without a screen, e.g. only shown in Waybar via `t- status --follow`
+    /// Run without a screen, e.g. only shown in Waybar via `t- ctl status --follow`
     #[arg(long, overrides_with = "no_headless")]
     pub headless: bool,
     #[arg(long, hide = true, overrides_with = "headless")]
@@ -324,16 +324,6 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Same as `t- ctl status`; kept so bar configs from 0.1/0.2 keep working.
-    #[command(hide = true)]
-    Status {
-        /// Keep printing a line whenever it changes (and wait for a timer if none runs)
-        #[arg(long)]
-        follow: bool,
-        /// Which timer, if several run [default: the most recently started]
-        #[arg(short, long)]
-        name: Option<String>,
-    },
     /// Watch and control running timers: status, list, pause, add 5m, ...
     Ctl {
         /// Which timer, if several run (see `t- ctl list`) [default: the most recently started]
@@ -717,11 +707,6 @@ mod tests {
         assert_eq!(ctl(&["toggle", "--all"]), Err(clap::error::ErrorKind::UnknownArgument));
         assert_eq!(ctl(&["dance"]), Err(clap::error::ErrorKind::InvalidSubcommand));
         assert_eq!(ctl(&["add"]), Err(clap::error::ErrorKind::MissingRequiredArgument));
-        let cli = Cli::try_parse_from(["t-", "status", "--follow"]).unwrap();
-        assert!(
-            matches!(cli.command, Some(Command::Status { follow: true, .. })),
-            "hidden alias"
-        );
         assert_eq!(
             ctl(&["status", "--follow", "--name", "tea"]),
             Ok((Some("tea".into()), Ok("status".into())))

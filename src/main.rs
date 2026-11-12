@@ -51,8 +51,25 @@ fn fail(msg: &str) -> ExitCode {
 }
 
 /// Parse the command line, with config file values as defaults underneath it.
+/// `t- status`, `t- pause -n tea`, ...: a `t- ctl` command typed without
+/// the `ctl` (0.1/0.2 had a top-level `status`). None of these words is a
+/// duration, so this never catches a real timer.
+fn ctl_hint(argv: &[OsString]) -> Option<String> {
+    let word = argv.get(1)?.to_str()?;
+    let ctl = Cli::command();
+    ctl.find_subcommand("ctl")?.find_subcommand(word)?;
+    let typed: Vec<String> = argv[1..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    Some(format!(
+        "`{word}` is a `t- ctl` command: try `t- ctl {}`",
+        typed.join(" ")
+    ))
+}
+
 fn parse_cli() -> Result<(Cli, Config), ExitCode> {
     let argv: Vec<OsString> = std::env::args_os().collect();
+    if let Some(hint) = ctl_hint(&argv) {
+        return Err(fail(&hint));
+    }
     // Parse once without the config: handles --help, finds --config/--no-config,
     // and means any error in the second parse must come from the config.
     let cli = Cli::parse_from(&argv);
@@ -238,12 +255,6 @@ fn run_command(command: &Command) -> ExitCode {
                 Err(e) => fail(&e.to_string()),
             }
         }
-        Command::Status { follow, name } => match control::status(name.as_deref(), *follow) {
-            Ok(()) => ExitCode::SUCCESS,
-            // Waybar (or a pipe) went away; nothing to report.
-            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
-            Err(e) => fail(&e.to_string()),
-        },
         Command::Ctl { name, command } => match control::ctl(name.as_deref(), command) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
@@ -516,6 +527,29 @@ fn notify(msg: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ctl_commands_without_ctl_get_a_hint() {
+        let hint = |args: &[&str]| {
+            let argv: Vec<std::ffi::OsString> = ["t-"].iter().chain(args).map(Into::into).collect();
+            super::ctl_hint(&argv)
+        };
+        assert_eq!(
+            hint(&["status", "--follow"]).as_deref(),
+            Some("`status` is a `t- ctl` command: try `t- ctl status --follow`")
+        );
+        assert!(
+            hint(&["pause", "-n", "tea"])
+                .unwrap()
+                .ends_with("`t- ctl pause -n tea`")
+        );
+        // Durations, options first, and other subcommands are left alone.
+        assert_eq!(hint(&["5m"]), None);
+        assert_eq!(hint(&["--no-config", "status"]), None);
+        assert_eq!(hint(&["ctl", "status"]), None);
+        assert_eq!(hint(&["help"]), None);
+        assert_eq!(hint(&[]), None);
+    }
+
     #[test]
     fn wide_chars_take_two_cells() {
         let g = crate::font::plain("a☕b");

@@ -169,7 +169,7 @@ that's already in use is refused), else the preset's (`t- @pomodoro` →
 `pomodoro`, then `eager-pomodoro`, …), else a random one like `steady-comet`.
 Headless timers print theirs when they start, and `t- ctl list` shows them all.
 Pass `-n NAME` to `t- ctl` to pick one; without it, `t- ctl` acts on the newest
-timer (marked `*` in the list). `t- status` from earlier versions still works.
+timer (marked `*` in the list).
 
 `t- --help` lists every option; `--list-themes` and `--list-effects` show
 what's available.

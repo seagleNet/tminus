@@ -299,7 +299,7 @@ pub fn request(stream: &mut UnixStream, line: &str) -> io::Result<String> {
     Ok(reply.trim_end_matches(['\n', '\r']).to_string())
 }
 
-/// `t- status [--follow]`: print status JSON. Following never ends on its
+/// `t- ctl status [--follow]`: print status JSON. Following never ends on its
 /// own: it reconnects whenever a timer (re)appears, printing the idle line
 /// in between, which is what a Waybar `exec` module wants.
 pub fn status(name: Option<&str>, follow: bool) -> io::Result<()> {
