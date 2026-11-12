@@ -115,6 +115,7 @@ e.g. a Waybar module or a keybinding:
   t- ctl list                      the running timers (also --json)
   t- ctl status --follow           JSON lines for a Waybar custom module
   t- ctl toggle                    pause/resume (also: add 5m, next, stop, ...)
+  t- ctl stop --all                stop every running timer
 
 CONFIG: defaults for any option can go in ~/.config/tminus/config.toml, keyed by
 the long option name (theme = \"nord\", bar = true, effect = [\"matrix\"]).
@@ -391,9 +392,13 @@ pub enum CtlCommand {
     Back,
     /// Play an effect now
     Effect,
-    /// Quit the timer
+    /// Quit the timer (or with --all, every running timer)
     #[command(alias = "quit")]
-    Stop,
+    Stop {
+        /// Stop every running timer
+        #[arg(short, long)]
+        all: bool,
+    },
 }
 
 impl CtlCommand {
@@ -416,7 +421,7 @@ impl CtlCommand {
             CtlCommand::Next => "next".into(),
             CtlCommand::Back => "back".into(),
             CtlCommand::Effect => "effect".into(),
-            CtlCommand::Stop => "stop".into(),
+            CtlCommand::Stop { .. } => "stop".into(),
         })
     }
 }
@@ -689,6 +694,7 @@ mod tests {
             Ok((tea.clone(), Ok("toggle".into())))
         );
         assert_eq!(ctl(&["quit", "--name", "tea"]), Ok((tea, Ok("stop".into()))));
+        assert_eq!(ctl(&["stop", "--all"]), Ok((None, Ok("stop".into()))));
         assert_eq!(ctl(&["dance"]), Err(clap::error::ErrorKind::InvalidSubcommand));
         assert_eq!(ctl(&["add"]), Err(clap::error::ErrorKind::MissingRequiredArgument));
         let cli = Cli::try_parse_from(["t-", "status", "--follow"]).unwrap();

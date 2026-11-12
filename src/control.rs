@@ -454,6 +454,31 @@ fn list(name: Option<&str>, json: bool) -> io::Result<()> {
     Ok(())
 }
 
+/// `t- ctl stop --all`: stop every running timer, saying which.
+fn stop_all() -> io::Result<()> {
+    let mut out = io::stdout().lock();
+    let mut found = false;
+    for path in sockets(None) {
+        let Some((name, pid)) = sock_name_and_pid(&path) else {
+            continue;
+        };
+        let Ok(mut s) = UnixStream::connect(&path) else {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        };
+        found = true;
+        match request(&mut s, "stop") {
+            Ok(reply) if reply == "ok" => writeln!(out, "stopped {name} (pid {pid})")?,
+            Ok(reply) => writeln!(out, "couldn't stop {name} (pid {pid}): {reply}")?,
+            Err(e) => writeln!(out, "couldn't stop {name} (pid {pid}): {e}")?,
+        }
+    }
+    if !found {
+        writeln!(out, "no running timer")?;
+    }
+    Ok(())
+}
+
 /// `t- ctl ...`: send a command and report the reply, or for `status` and
 /// `list`, print what was asked for. Returns success.
 pub fn ctl(name: Option<&str>, command: &crate::cli::CtlCommand) -> Result<(), String> {
@@ -461,6 +486,10 @@ pub fn ctl(name: Option<&str>, command: &crate::cli::CtlCommand) -> Result<(), S
     let printed = match command {
         CtlCommand::Status { follow } => Some(status(name, *follow)),
         CtlCommand::List { json } => Some(list(name, *json)),
+        CtlCommand::Stop { all: true } if name.is_some() => {
+            return Err("--all stops every timer; leave out --name (or --all)".into());
+        }
+        CtlCommand::Stop { all: true } => Some(stop_all()),
         _ => None,
     };
     if let Some(result) = printed {
