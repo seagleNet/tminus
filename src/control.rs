@@ -306,7 +306,8 @@ pub fn request(stream: &mut UnixStream, line: &str) -> io::Result<String> {
 
 /// `t- ctl status [--follow]`: print status JSON. Following never ends on its
 /// own: it reconnects whenever a timer (re)appears, printing the idle line
-/// in between, which is what a Waybar `exec` module wants.
+/// in between, which is what a Waybar `exec` module wants. Without `name` it
+/// follows the newest timer, moving on as soon as a newer one starts.
 pub fn status(name: Option<&str>, follow: bool) -> io::Result<()> {
     let mut out = io::stdout().lock();
     if !follow {
@@ -326,16 +327,44 @@ pub fn status(name: Option<&str>, follow: bool) -> io::Result<()> {
         Ok(())
     };
     loop {
-        if let Some(mut s) = connect(name) {
-            s.set_read_timeout(None)?;
+        let mut newer = false;
+        if let Some((mut s, path)) = connect_path(name) {
             writeln!(s, "follow")?;
-            for line in BufReader::new(s).lines() {
-                let Ok(line) = line else { break };
-                emit(&line)?;
+            // Wake up every second even without news, to look for a newer timer.
+            s.set_read_timeout(Some(Duration::from_secs(1)))?;
+            let mut reader = BufReader::new(s);
+            let mut buf = Vec::new();
+            let mut checked = std::time::Instant::now();
+            loop {
+                match reader.read_until(b'\n', &mut buf) {
+                    Ok(_) if buf.ends_with(b"\n") => {
+                        emit(String::from_utf8_lossy(&buf).trim_end())?;
+                        buf.clear();
+                    }
+                    // A timeout keeps what was read so far in `buf`.
+                    Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {}
+                    // The timer quit (or the connection broke).
+                    Ok(_) | Err(_) => break,
+                }
+                // A running timer sends a line every second, so look for a newer
+                // one here, after lines and timeouts alike, about once a second.
+                if name.is_none() && checked.elapsed() >= Duration::from_secs(1) {
+                    checked = std::time::Instant::now();
+                    if sockets(None).first().is_some_and(|p| *p != path) {
+                        newer = true;
+                        break;
+                    }
+                }
             }
         }
-        emit(IDLE_JSON)?;
-        std::thread::sleep(Duration::from_secs(1));
+        // Moving on to another timer (a newer one, or one still running after
+        // this one quit): no idle line in between, so a bar doesn't flicker.
+        if newer || !sockets(name).is_empty() {
+            std::thread::sleep(Duration::from_millis(50));
+        } else {
+            emit(IDLE_JSON)?;
+            std::thread::sleep(Duration::from_secs(1));
+        }
     }
 }
 
