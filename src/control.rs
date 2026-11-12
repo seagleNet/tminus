@@ -454,8 +454,9 @@ fn list(name: Option<&str>, json: bool) -> io::Result<()> {
     Ok(())
 }
 
-/// `t- ctl stop --all`: stop every running timer, saying which.
-fn stop_all() -> io::Result<()> {
+/// `t- ctl pause|resume|stop --all`: send `line` to every running timer and
+/// say which ones it reached (`done` is the past tense: `paused`).
+fn on_all(line: &str, done: &str) -> io::Result<()> {
     let mut out = io::stdout().lock();
     let mut found = false;
     for path in sockets(None) {
@@ -467,10 +468,10 @@ fn stop_all() -> io::Result<()> {
             continue;
         };
         found = true;
-        match request(&mut s, "stop") {
-            Ok(reply) if reply == "ok" => writeln!(out, "stopped {name} (pid {pid})")?,
-            Ok(reply) => writeln!(out, "couldn't stop {name} (pid {pid}): {reply}")?,
-            Err(e) => writeln!(out, "couldn't stop {name} (pid {pid}): {e}")?,
+        match request(&mut s, line) {
+            Ok(reply) if reply == "ok" => writeln!(out, "{done} {name} (pid {pid})")?,
+            Ok(reply) => writeln!(out, "couldn't {line} {name} (pid {pid}): {reply}")?,
+            Err(e) => writeln!(out, "couldn't {line} {name} (pid {pid}): {e}")?,
         }
     }
     if !found {
@@ -486,10 +487,14 @@ pub fn ctl(name: Option<&str>, command: &crate::cli::CtlCommand) -> Result<(), S
     let printed = match command {
         CtlCommand::Status { follow } => Some(status(name, *follow)),
         CtlCommand::List { json } => Some(list(name, *json)),
-        CtlCommand::Stop { all: true } if name.is_some() => {
-            return Err("--all stops every timer; leave out --name (or --all)".into());
+        CtlCommand::Pause { all: true } | CtlCommand::Resume { all: true } | CtlCommand::Stop { all: true }
+            if name.is_some() =>
+        {
+            return Err("--all acts on every timer; leave out --name (or --all)".into());
         }
-        CtlCommand::Stop { all: true } => Some(stop_all()),
+        CtlCommand::Pause { all: true } => Some(on_all("pause", "paused")),
+        CtlCommand::Resume { all: true } => Some(on_all("resume", "resumed")),
+        CtlCommand::Stop { all: true } => Some(on_all("stop", "stopped")),
         _ => None,
     };
     if let Some(result) = printed {

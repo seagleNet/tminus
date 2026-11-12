@@ -115,7 +115,7 @@ e.g. a Waybar module or a keybinding:
   t- ctl list                      the running timers (also --json)
   t- ctl status --follow           JSON lines for a Waybar custom module
   t- ctl toggle                    pause/resume (also: add 5m, next, stop, ...)
-  t- ctl stop --all                stop every running timer
+  t- ctl pause --all               pause every running timer (also: resume, stop)
 
 CONFIG: defaults for any option can go in ~/.config/tminus/config.toml, keyed by
 the long option name (theme = \"nord\", bar = true, effect = [\"matrix\"]).
@@ -366,10 +366,18 @@ pub enum CtlCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Pause the countdown
-    Pause,
-    /// Resume the countdown (or start the next segment when waiting)
-    Resume,
+    /// Pause the countdown (or with --all, every running timer)
+    Pause {
+        /// Pause every running timer
+        #[arg(short, long)]
+        all: bool,
+    },
+    /// Resume the countdown, or start the next segment when waiting (--all: every timer)
+    Resume {
+        /// Resume every running timer
+        #[arg(short, long)]
+        all: bool,
+    },
     /// Pause or resume
     Toggle,
     /// Add time, e.g. `t- ctl add 5m`
@@ -412,8 +420,8 @@ impl CtlCommand {
         Ok(match self {
             CtlCommand::Status { .. } => "status".into(),
             CtlCommand::List { .. } => return Err("`list` isn't sent to a single timer".into()),
-            CtlCommand::Pause => "pause".into(),
-            CtlCommand::Resume => "resume".into(),
+            CtlCommand::Pause { .. } => "pause".into(),
+            CtlCommand::Resume { .. } => "resume".into(),
             CtlCommand::Toggle => "toggle".into(),
             CtlCommand::Add { duration } => with_duration("add", duration)?,
             CtlCommand::Sub { duration } => with_duration("sub", duration)?,
@@ -695,6 +703,9 @@ mod tests {
         );
         assert_eq!(ctl(&["quit", "--name", "tea"]), Ok((tea, Ok("stop".into()))));
         assert_eq!(ctl(&["stop", "--all"]), Ok((None, Ok("stop".into()))));
+        assert_eq!(ctl(&["pause", "-a"]), Ok((None, Ok("pause".into()))));
+        assert_eq!(ctl(&["resume", "--all"]), Ok((None, Ok("resume".into()))));
+        assert_eq!(ctl(&["toggle", "--all"]), Err(clap::error::ErrorKind::UnknownArgument));
         assert_eq!(ctl(&["dance"]), Err(clap::error::ErrorKind::InvalidSubcommand));
         assert_eq!(ctl(&["add"]), Err(clap::error::ErrorKind::MissingRequiredArgument));
         let cli = Cli::try_parse_from(["t-", "status", "--follow"]).unwrap();

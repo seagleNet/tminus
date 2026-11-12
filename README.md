@@ -136,7 +136,7 @@ t- ctl list               # the running timers: name, PID, headless or window, s
 t- ctl status             # one line of JSON
 t- ctl status --follow    # a line per change, for a Waybar custom module
 t- ctl toggle             # also: pause, resume, add 5m, sub 1m, restart, next, back, effect, stop
-t- ctl stop --all         # stop every running timer
+t- ctl pause --all        # every running timer (also: resume --all, stop --all)
 ```
 
 Waybar module:
