@@ -504,6 +504,21 @@ pub fn format_clock(secs: u64, hours: Option<usize>) -> String {
 
 /// Without seconds, for long countdowns: `1h 05m`, `2d 03h 04m`. Minutes are
 /// rounded up, like the full clock rounds up seconds.
+/// A segment length in words, short and exact: `5m`, `1h 30m`, `2m 30s`, `45s`.
+pub fn format_span(secs: u64) -> String {
+    let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
+    let parts: Vec<String> = [(h, "h"), (m, "m"), (s, "s")]
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, unit)| format!("{n}{unit}"))
+        .collect();
+    if parts.is_empty() {
+        "0s".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
 pub fn format_coarse(secs: u64) -> String {
     let mins = secs.div_ceil(60);
     let (d, h, m) = (mins / 1440, mins / 60 % 24, mins % 60);
@@ -550,6 +565,16 @@ mod tests {
         assert!(complete("completions ").contains(&"zsh".to_string()));
         // Built-in themes (plus whatever is installed where the test runs).
         assert!(complete("--theme no").contains(&"nord".to_string()));
+    }
+
+    #[test]
+    fn spans() {
+        assert_eq!(format_span(300), "5m");
+        assert_eq!(format_span(5400), "1h 30m");
+        assert_eq!(format_span(150), "2m 30s");
+        assert_eq!(format_span(45), "45s");
+        assert_eq!(format_span(3600), "1h");
+        assert_eq!(format_span(0), "0s");
     }
 
     #[test]

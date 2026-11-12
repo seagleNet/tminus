@@ -109,9 +109,11 @@ t- @pomodoro                               # built in: 4×25m work with 5m break
 t- @focus                                  # your own preset (see Configuration)
 ```
 
-The status line shows progress (`● ● ◐ ○`); `n`/`b` skip forward/back, and
-`--bar-total` makes the progress bar cover the whole sequence. Each segment
-change rings the bell, flashes, and (with `--notify`) sends a notification.
+The status line shows progress and what comes next (`● ◐ ○ ○ · next: break 5m`,
+the name in that segment's theme color; `t- status` has it in the tooltip);
+`n`/`b` skip forward/back, and `--bar-total` makes the progress bar cover the
+whole sequence. Each segment change rings the bell, flashes, and (with
+`--notify`) sends a notification.
 
 ## At zero
 

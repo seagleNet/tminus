@@ -8,8 +8,8 @@ use rand::{RngExt, seq::IndexedRandom};
 
 use crate::{
     cli::{
-        Cli, DEMO_KEYS, KEYS, StatusAlign, StatusPos, StatusTime, TitleSize, format_clock, format_coarse, format_ticks,
-        parse_duration,
+        Cli, DEMO_KEYS, KEYS, StatusAlign, StatusPos, StatusTime, TitleSize, format_clock, format_coarse, format_span,
+        format_ticks, parse_duration,
     },
     clock::Timer,
     control::json_str,
@@ -546,6 +546,7 @@ impl<'a> App<'a> {
         if self.plan.len() > 1 {
             tip.push(format!("segment {}/{}", self.seg + 1, self.plan.len()));
         }
+        tip.extend(self.upcoming_text());
         tip.extend(self.state_text());
         let pct = if self.timer.total.is_zero() {
             100
@@ -611,6 +612,27 @@ impl<'a> App<'a> {
             })
             .collect();
         Some(dots.join(" "))
+    }
+
+    /// What comes after this segment: its label (if any), length and theme.
+    /// `None` on the last segment, and while waiting (the status line already
+    /// says what `n` starts then).
+    fn upcoming(&self) -> Option<(Option<&str>, String, usize)> {
+        if self.is_last() || self.waiting() {
+            return None;
+        }
+        let next = &self.plan[self.seg + 1];
+        let theme = next.theme.unwrap_or(self.base_theme);
+        Some((next.label.as_deref(), format_span(next.dur.as_secs()), theme))
+    }
+
+    /// `next: break 5m` (or `next: 5m` without a label).
+    fn upcoming_text(&self) -> Option<String> {
+        let (label, span, _) = self.upcoming()?;
+        Some(match label {
+            Some(l) => format!("next: {l} {span}"),
+            None => format!("next: {span}"),
+        })
     }
 
     // --- drawing ----------------------------------------------------------
@@ -894,19 +916,43 @@ impl<'a> App<'a> {
             StatusTime::Left if self.finished_at.is_some() => None,
             StatusTime::Left => Some(format!("{} left", self.clock_text(self.left_secs()))),
         };
-        let parts: Vec<String> = [time, self.sequence_text(), self.state_text()]
-            .into_iter()
-            .flatten()
-            .collect();
-        if parts.is_empty() {
-            return;
-        }
-        let status = parts.join("  ·  ");
         let col = if self.finished_at.is_some() {
             theme.flash.lerp(theme.dim, 0.5 + 0.5 * wave(now, 5.0))
         } else {
             theme.dim
         };
+        // Pieces of the status line, each with its color: the dots, then what
+        // comes next with its name in the next segment's theme color so it
+        // stands out (and shows a theme change coming), then the state.
+        let mut parts: Vec<Vec<(String, Rgb)>> = [time, self.sequence_text()]
+            .into_iter()
+            .flatten()
+            .map(|t| vec![(t, col)])
+            .collect();
+        if let Some((label, span, next_theme)) = self.upcoming() {
+            let accent = self.themes[next_theme].gradient_at(0.0);
+            parts.push(match label {
+                Some(l) => vec![
+                    ("next: ".into(), col),
+                    (l.to_string(), accent),
+                    (format!(" {span}"), col),
+                ],
+                None => vec![("next: ".into(), col), (span, accent)],
+            });
+        }
+        parts.extend(self.state_text().map(|t| vec![(t, col)]));
+        if parts.is_empty() {
+            return;
+        }
+        let spans: Vec<(String, Rgb)> = parts
+            .into_iter()
+            .enumerate()
+            .flat_map(|(i, part)| {
+                let sep = (i > 0).then(|| ("  ·  ".to_string(), col));
+                sep.into_iter().chain(part)
+            })
+            .collect();
+        let w: i32 = spans.iter().map(|(t, _)| str_width(t)).sum();
         // Span to align within, and the row: the clock's edges below it, or
         // the screen's (with a small margin) at the top/bottom.
         let (sh, margin) = (self.frame.h, 2);
@@ -915,13 +961,15 @@ impl<'a> App<'a> {
             StatusPos::Top => (margin, sw - margin, 1),
             StatusPos::Bottom => (margin, sw - margin, sh - 2 - self.edge_rows().1 + 2),
         };
-        let w = str_width(&status);
-        let x = match self.cli.status_align {
+        let mut x = match self.cli.status_align {
             StatusAlign::Left => left,
             StatusAlign::Center => left + (right - left - w) / 2,
             StatusAlign::Right => right - w,
         };
-        self.frame.text(x, row, &status, col);
+        for (text, c) in spans {
+            self.frame.text(x, row, &text, c);
+            x += str_width(&text);
+        }
     }
 
     /// The keybinding popup: a bordered box centered on the screen, drawn over
@@ -1108,6 +1156,8 @@ mod tests {
         let themes = crate::theme::builtin();
         let mut app = app_with(&cli, &themes, &[1, 2]);
         assert_eq!(app.tick(0.0), None);
+        assert_eq!(app.upcoming_text().as_deref(), Some("next: s1 2m"));
+        assert!(app.status_json().contains(r"segment 1/2\nnext: s1 2m"));
         app.remote("sub 5m", 0.0).ok();
         assert_eq!(
             app.tick(1.0),
@@ -1117,6 +1167,8 @@ mod tests {
             })
         );
         assert_eq!((app.seg, app.title()), (1, Some("s1")));
+        // Nothing comes after the last segment.
+        assert_eq!(app.upcoming_text(), None);
         assert!(!app.completed());
         app.remote("sub 5m", 2.0).ok();
         assert_eq!(
@@ -1137,6 +1189,7 @@ mod tests {
         app.remote("sub 5m", 0.0).ok();
         assert!(matches!(app.tick(1.0), Some(Event::SegmentDone { .. })));
         assert!(app.waiting() && app.seg == 0);
+        assert_eq!(app.upcoming_text(), None, "the waiting line already names it");
         assert!(app.status_json().contains(r#""class":"waiting""#));
         app.remote("toggle", 2.0).ok();
         assert!(!app.waiting() && app.seg == 1);
