@@ -32,12 +32,18 @@ const BUILTIN_PRESETS: &[(&str, &[&str])] = &[
 
 /// Parse sequence tokens; `presets` are the config's, on top of the built-in ones.
 pub fn parse(tokens: &[String], presets: &HashMap<String, Vec<String>>) -> Result<Vec<Segment>, String> {
+    parse_level(tokens, &with_builtins(presets), true)
+}
+
+/// The built-in presets with the config's on top (a config preset with a
+/// built-in's name replaces it).
+pub fn with_builtins(presets: &HashMap<String, Vec<String>>) -> HashMap<String, Vec<String>> {
     let mut all: HashMap<String, Vec<String>> = BUILTIN_PRESETS
         .iter()
         .map(|(name, items)| ((*name).to_string(), items.iter().map(|t| (*t).to_string()).collect()))
         .collect();
     all.extend(presets.iter().map(|(k, v)| (k.clone(), v.clone())));
-    parse_level(tokens, &all, true)
+    all
 }
 
 fn parse_level(tokens: &[String], presets: &HashMap<String, Vec<String>>, top: bool) -> Result<Vec<Segment>, String> {

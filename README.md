@@ -50,7 +50,9 @@ The command is called **`t-`** (as in T-minus).
   ```
 
 Shell completions and the man page come from the binary itself. Completions
-ask `t-` on each Tab, so they know your themes (built-in, Omarchy and config).
+ask `t-` on each Tab, so they know your themes (built-in, Omarchy and config),
+presets (`t- @<Tab>`, and `25m@<Tab>` for a segment's theme) and running timers
+(`t- ctl pause -n <Tab>`).
 Hook them up in your shell's startup file:
 
 ```sh

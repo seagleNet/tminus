@@ -134,7 +134,8 @@ pub struct Cli {
     #[arg(
         value_name = "DURATION",
         required_unless_present_any = ["until", "list_effects", "list_themes", "demo"],
-        conflicts_with = "until"
+        conflicts_with = "until",
+        add = clap_complete::ArgValueCompleter::new(complete_duration)
     )]
     pub durations: Vec<String>,
 
@@ -450,6 +451,38 @@ fn timer_candidates() -> Vec<clap_complete::CompletionCandidate> {
         .collect()
 }
 
+/// Shell completion for a sequence token: presets after a leading `@`
+/// (`@pomodoro`), themes after an `@` that follows a duration (`25m:work@nord`).
+/// Durations and labels are free text, so they get nothing.
+fn complete_duration(current: &std::ffi::OsStr) -> Vec<clap_complete::CompletionCandidate> {
+    use clap::CommandFactory;
+    use clap_complete::CompletionCandidate;
+    let current = current.to_string_lossy();
+    if let Some(typed) = current.strip_prefix('@') {
+        let config = crate::config::default_path()
+            .and_then(|p| crate::config::load(&p, &Cli::command(), false).ok())
+            .unwrap_or_default();
+        let mut presets: Vec<(String, Vec<String>)> = crate::plan::with_builtins(&config.presets).into_iter().collect();
+        presets.sort();
+        return presets
+            .into_iter()
+            .filter(|(name, _)| name.starts_with(typed))
+            .map(|(name, tokens)| CompletionCandidate::new(format!("@{name}")).help(Some(tokens.join(" ").into())))
+            .collect();
+    }
+    let Some((before, typed)) = current.rsplit_once('@') else {
+        return vec![];
+    };
+    theme_candidates()
+        .into_iter()
+        .filter(|c| c.get_value().to_string_lossy().starts_with(typed))
+        .map(|c| {
+            let help = c.get_help().cloned();
+            CompletionCandidate::new(format!("{before}@{}", c.get_value().to_string_lossy())).help(help)
+        })
+        .collect()
+}
+
 /// Shell completion for `--theme`: every theme `t-` knows here, i.e. the
 /// built-in ones, installed Omarchy themes and the default config's themes.
 fn theme_candidates() -> Vec<clap_complete::CompletionCandidate> {
@@ -618,6 +651,11 @@ mod tests {
         assert!(complete("completions ").contains(&"zsh".to_string()));
         // Built-in themes (plus whatever is installed where the test runs).
         assert!(complete("--theme no").contains(&"nord".to_string()));
+        // Sequence tokens: presets after a leading @, themes after a duration's @.
+        assert!(complete("@pom").contains(&"@pomodoro".to_string()));
+        assert!(complete("25m:work@no").contains(&"25m:work@nord".to_string()));
+        assert!(complete("5m 25m@no").contains(&"25m@nord".to_string()));
+        assert!(!complete("25m:").iter().any(|c| c.starts_with("25m:")));
     }
 
     #[test]
