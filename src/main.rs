@@ -296,6 +296,7 @@ fn serve(server: &mut Option<Server>, app: &mut App, now: f64) -> bool {
     for mut req in srv.accept() {
         let reply = match req.line.as_str() {
             "status" => app.status_json(),
+            "info" => app.info_line(app.cli.headless),
             "follow" => {
                 let status = app.status_json();
                 srv.follow(req.stream, &status);

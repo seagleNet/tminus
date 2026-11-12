@@ -27,7 +27,7 @@ MSRV job; it must stay green. `release.yml` runs on `v*` tags.
 - `plan.rs`: sequence tokens (`25m:work@nord`, `x4`, `@preset`)
 - `clock.rs`: `Timer` (suspend-aware `BootInstant`; wall-clock mode for `--until`), `--until` parsing incl. DST
 - `config.rs`: `~/.config/tminus/config.toml` turned into CLI args (plus `[themes.*]`, `[presets]`)
-- `control.rs`: Unix-socket remote control (`t- status [--follow]`, `t- ctl <command>`)
+- `control.rs`: Unix-socket remote control (`t- ctl status [--follow]`, `t- ctl list`, `t- ctl <command>`)
 - `effects/`: `mod.rs` (Kind enum, pools, `make`, `max_duration`, `measure`, original effects), `motion.rs` and `light.rs` (effects ported from TerminalTextEffects)
 - `scene.rs` (clock canvas and settled look), `term.rs` (frame buffer and diffing presenter), `font.rs`, `theme.rs`, `util.rs`
 
@@ -45,7 +45,7 @@ MSRV job; it must stay green. `release.yml` runs on `v*` tags.
 - **Flashes fade to the terminal's real background**, queried at startup (`term::query_background`: OSC 11 plus a DA1 sentinel so non-supporting terminals don't stall, 300ms cap); the theme's `bg` is only the fallback. Skipped inside Neovim/Vim terminals (`$NVIM`, `$VIM_TERMINAL`): libvterm reports black, not what is drawn. Fading to a guessed color makes the last frame jump when the fill is dropped.
 - **`--demo`** (`app::Demo`) reuses the normal app: `effect_choices` returns the chosen kind, `next_replay` loops it, `f` swaps in a short `Timer` and `tick` restores the full one after the zero flash. No announce/exec/socket in demo; `run` takes `&mut App` so `main` can print the choice after `term::restore`.
 - **Completions are dynamic** (`clap_complete` `unstable-dynamic`, pinned `~4.6`): `CompleteEnv` at the top of `main` answers `COMPLETE=<shell> t-`; `t- completions <shell>` prints the same hook (zsh gets a `funcstack` tail so it works autoloaded from `$fpath`). The static scripts broke on positional DURATION + subcommands. `--theme` has custom candidates (`cli::theme_candidates`); the `completions` test guards the engine.
-- **`t- ctl` words are subcommands** (`CtlCommand`, `--name` is global) for help and completion; `CtlCommand::line` turns them into the socket protocol's text line (`App::remote`), checking durations first. `--demo`/`--list-*` stay flags on purpose: subcommands don't get the config merged in.
+- **`t- ctl` words are subcommands** (`CtlCommand`, `--name` is global) for help and completion; `CtlCommand::line` turns them into the socket protocol's text line (`App::remote`), checking durations first. `--demo`/`--list-*` stay flags on purpose: subcommands don't get the config merged in. `status` and `list` live under `ctl` too (top-level `t- status` is a hidden alias for 0.1/0.2 bar configs); `list` asks each socket for `info` (tab-separated, see `App::info_line`) and shows older timers that don't know it as `?`.
 - Socket path: `$XDG_RUNTIME_DIR/tminus/<name>.<pid>.sock`, falling back to `/tmp/tminus-<uid>` when that path would exceed the ~108-byte socket limit.
 
 ## Effects and attribution
@@ -77,7 +77,7 @@ effects (highlight, colorshift, spotlights) are invisible in text snapshots.
   `cargo publish` from the tagged commit; bump the GIF URL tag in the README if re-recorded. `cargo publish`'s verify step builds the packaged copy into the shared `target/` and leaves `target/debug/t-` pointing at `target/package/` sources (edits then look "fresh"): run `cargo clean -p tminus` afterwards.
 - AUR: not submitted yet (registrations were closed). When it opens: `updpkgsums` +
   `makepkg --printsrcinfo > .SRCINFO` in `packaging/aur/`.
-- Never tested for real: Waybar itself (current Omarchy has omarchy-shell instead; `t- status
+- Never tested for real: Waybar itself (current Omarchy has omarchy-shell instead; `t- ctl status
   --follow` was checked through a pipe), the Hyprland binds in the README, running on macOS
   (CI only builds and tests it).
 - README GIFs: `vhs/render.sh` (tapes in `vhs/`, output `assets/`, needs vhs + gifsicle). Tapes use a fresh `HOME`, no Omarchy themes, and hidden aliases for flags; re-run after visible changes. The README links them by absolute URL pinned to a tag (`raw.githubusercontent.com/.../v0.1.0/assets/...`, so the crates.io page works); bump that tag when re-recording for a release.

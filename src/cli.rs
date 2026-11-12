@@ -110,9 +110,10 @@ KEYS:
   h / ?        show / hide this list of keys (q and esc close it too)
   q / esc      quit (exit code 1 if the timer hadn't finished)
 
-REMOTE CONTROL: a running timer can be watched and steered from elsewhere,
+REMOTE CONTROL: running timers can be listed, watched and steered from elsewhere,
 e.g. a Waybar module or a keybinding:
-  t- status --follow               JSON lines for a Waybar custom module
+  t- ctl list                      the running timers (also --json)
+  t- ctl status --follow           JSON lines for a Waybar custom module
   t- ctl toggle                    pause/resume (also: add 5m, next, stop, ...)
 
 CONFIG: defaults for any option can go in ~/.config/tminus/config.toml, keyed by
@@ -321,7 +322,8 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Print a running timer's state as JSON, in Waybar's custom-module format
+    /// Same as `t- ctl status`; kept so bar configs from 0.1/0.2 keep working.
+    #[command(hide = true)]
     Status {
         /// Keep printing a line whenever it changes (and wait for a timer if none runs)
         #[arg(long)]
@@ -330,7 +332,7 @@ pub enum Command {
         #[arg(long)]
         name: Option<String>,
     },
-    /// Control a running timer
+    /// Watch and control running timers: status, list, pause, add 5m, ...
     Ctl {
         /// Which timer, if several run [default: the most recently started]
         #[arg(long, global = true)]
@@ -350,6 +352,18 @@ pub enum Command {
 /// What `t- ctl` asks a running timer to do.
 #[derive(Subcommand, Debug, PartialEq, Eq)]
 pub enum CtlCommand {
+    /// Show a timer's state as one line of JSON (Waybar's custom-module format)
+    Status {
+        /// Keep printing a line whenever it changes (and wait for a timer if none runs)
+        #[arg(long)]
+        follow: bool,
+    },
+    /// List the running timers, newest first (* = the one ctl acts on by default)
+    List {
+        /// Print a JSON array instead of a table
+        #[arg(long)]
+        json: bool,
+    },
     /// Pause the countdown
     Pause,
     /// Resume the countdown (or start the next segment when waiting)
@@ -390,6 +404,8 @@ impl CtlCommand {
             parse_duration(&d).map(|_| format!("{cmd} {d}"))
         };
         Ok(match self {
+            CtlCommand::Status { .. } => "status".into(),
+            CtlCommand::List { .. } => return Err("`list` isn't sent to a single timer".into()),
             CtlCommand::Pause => "pause".into(),
             CtlCommand::Resume => "resume".into(),
             CtlCommand::Toggle => "toggle".into(),
@@ -564,7 +580,8 @@ mod tests {
         assert!(!complete("--no-").contains(&"--no-bar".to_string()));
         assert!(complete("--no-").contains(&"--no-bell".to_string()));
         // Subcommands get their own options and values.
-        assert_eq!(complete("status --f"), ["--follow"]);
+        assert_eq!(complete("ctl status --f"), ["--follow"]);
+        assert!(complete("ctl l").contains(&"list".to_string()));
         assert_eq!(complete("ctl t"), ["toggle"]);
         assert!(complete("ctl ").contains(&"restart".to_string()));
         assert!(!complete("ctl add ").contains(&"toggle".to_string()));
@@ -674,7 +691,15 @@ mod tests {
         assert_eq!(ctl(&["dance"]), Err(clap::error::ErrorKind::InvalidSubcommand));
         assert_eq!(ctl(&["add"]), Err(clap::error::ErrorKind::MissingRequiredArgument));
         let cli = Cli::try_parse_from(["t-", "status", "--follow"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::Status { follow: true, .. })));
+        assert!(
+            matches!(cli.command, Some(Command::Status { follow: true, .. })),
+            "hidden alias"
+        );
+        assert_eq!(
+            ctl(&["status", "--follow", "--name", "tea"]),
+            Ok((Some("tea".into()), Ok("status".into())))
+        );
+        assert!(matches!(ctl(&["list", "--json"]), Ok((None, Err(_)))));
         let cli = Cli::try_parse_from(["t-", "completions", "fish"]).unwrap();
         assert!(matches!(cli.command, Some(Command::Completions { .. })));
     }

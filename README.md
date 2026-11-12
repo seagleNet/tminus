@@ -110,7 +110,7 @@ t- @focus                                  # your own preset (see Configuration)
 ```
 
 The status line shows progress and what comes next (`● ◐ ○ ○ · next: break 5m`,
-the name in that segment's theme color; `t- status` has it in the tooltip);
+the name in that segment's theme color; `t- ctl status` has it in the tooltip);
 `n`/`b` skip forward/back, and `--bar-total` makes the progress bar cover the
 whole sequence. Each segment change rings the bell, flashes, and (with
 `--notify`) sends a notification.
@@ -132,8 +132,9 @@ at the end and at every segment change of a sequence:
 Every running timer can be watched and controlled from outside:
 
 ```sh
-t- status                 # one line of JSON
-t- status --follow        # a line per change, for a Waybar custom module
+t- ctl list               # the running timers: name, PID, headless or window, state, clock
+t- ctl status             # one line of JSON
+t- ctl status --follow    # a line per change, for a Waybar custom module
 t- ctl toggle             # also: pause, resume, add 5m, sub 1m, restart, next, back, effect, stop
 ```
 
@@ -141,7 +142,7 @@ Waybar module:
 
 ```jsonc
 "custom/tminus": {
-  "exec": "t- status --follow",
+  "exec": "t- ctl status --follow",
   "return-type": "json",
   "on-click": "t- ctl toggle",
   "on-click-right": "t- ctl stop",
@@ -163,7 +164,8 @@ bind = SUPER SHIFT, T, exec, t- ctl toggle
 ```
 
 With several timers running, give them names (`--name tea`) and pass the same
-`--name` to `t- status` / `t- ctl`; otherwise they act on the newest timer.
+`--name` to `t- ctl`; otherwise it acts on the newest timer (marked `*` in
+`t- ctl list`). `t- status` from earlier versions still works.
 
 `t- --help` lists every option; `--list-themes` and `--list-effects` show
 what's available.

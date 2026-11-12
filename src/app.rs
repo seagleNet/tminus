@@ -523,8 +523,10 @@ impl<'a> App<'a> {
     // --- remote status ----------------------------------------------------
 
     /// One line of JSON in Waybar's custom-module format.
-    pub fn status_json(&self) -> String {
-        let (class, clock) = if self.completed() {
+    /// The state (`running`, `paused`, `alert`, `waiting`, `done`) and the
+    /// clock as the bar shows it (`18:07`, or `+00:12` of overtime).
+    fn state_and_clock(&self) -> (&'static str, String) {
+        if self.completed() {
             ("done", format!("+{}", self.clock_text(self.overtime_secs())))
         } else if self.waiting() {
             ("waiting", format!("+{}", self.clock_text(self.overtime_secs())))
@@ -534,7 +536,11 @@ impl<'a> App<'a> {
             ("alert", self.clock_text(self.left_secs()))
         } else {
             ("running", self.clock_text(self.left_secs()))
-        };
+        }
+    }
+
+    pub fn status_json(&self) -> String {
+        let (class, clock) = self.state_and_clock();
         let text = match self.plan[self.seg].label.as_deref() {
             Some(label) => format!("{label} {clock}"),
             None => clock,
@@ -560,6 +566,21 @@ impl<'a> App<'a> {
             json_str(class),
             json_str(class),
         )
+    }
+
+    /// The reply to `info` (for `t- ctl list`): mode, state, clock, title and
+    /// sequence position, tab-separated (tabs and newlines in the title
+    /// become spaces).
+    pub fn info_line(&self, headless: bool) -> String {
+        let (class, clock) = self.state_and_clock();
+        let title = self.title().unwrap_or_default().replace(['\t', '\n', '\r'], " ");
+        let seg = if self.plan.len() > 1 {
+            format!("{}/{}", self.seg + 1, self.plan.len())
+        } else {
+            String::new()
+        };
+        let mode = if headless { "headless" } else { "window" };
+        format!("{mode}\t{class}\t{clock}\t{title}\t{seg}")
     }
 
     /// Words describing the state: `paused`, `until 17:30`, `time's up +00:12`, ...
@@ -1158,6 +1179,7 @@ mod tests {
         assert_eq!(app.tick(0.0), None);
         assert_eq!(app.upcoming_text().as_deref(), Some("next: s1 2m"));
         assert!(app.status_json().contains(r"segment 1/2\nnext: s1 2m"));
+        assert_eq!(app.info_line(true), "headless\trunning\t01:00\ts0\t1/2");
         app.remote("sub 5m", 0.0).ok();
         assert_eq!(
             app.tick(1.0),

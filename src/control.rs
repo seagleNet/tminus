@@ -2,8 +2,9 @@
 //!
 //! Every running timer listens on `$XDG_RUNTIME_DIR/tminus/<name>.<pid>.sock`
 //! (a private, per-user directory). The protocol is one line of text per
-//! connection: `status`, `follow` (stream status lines), or a command such as
-//! `toggle` or `add 5m`; the reply is a JSON status line, `ok` or `error: ...`.
+//! connection: `status`, `follow` (stream status lines), `info` (one
+//! tab-separated line for `t- ctl list`), or a command such as `toggle` or
+//! `add 5m`; the reply is a JSON status line, the info line, `ok` or `error: ...`.
 
 use std::{
     fmt::Write as _,
@@ -140,10 +141,13 @@ impl Drop for Server {
 
 /// Connect to a running timer: the one called `name`, else the newest.
 /// Sockets left behind by timers that died are removed along the way.
-pub fn connect(name: Option<&str>) -> Option<UnixStream> {
+/// Timer sockets (optionally only those named `name`), newest first.
+fn sockets(name: Option<&str>) -> Vec<PathBuf> {
     let want = name.map(sanitize);
-    let mut socks: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(socket_dir())
-        .ok()?
+    let Ok(dir) = std::fs::read_dir(socket_dir()) else {
+        return vec![];
+    };
+    let mut socks: Vec<(std::time::SystemTime, PathBuf)> = dir
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| {
@@ -155,7 +159,13 @@ pub fn connect(name: Option<&str>) -> Option<UnixStream> {
         .filter_map(|p| Some((p.metadata().ok()?.modified().ok()?, p)))
         .collect();
     socks.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
-    for (_, path) in socks {
+    socks.into_iter().map(|(_, path)| path).collect()
+}
+
+/// Connect to the newest live timer (named `name`, if given). Sockets left
+/// behind by timers that died are removed on the way.
+pub fn connect(name: Option<&str>) -> Option<UnixStream> {
+    for path in sockets(name) {
         match UnixStream::connect(&path) {
             Ok(s) => return Some(s),
             Err(_) => {
@@ -178,7 +188,8 @@ pub fn request(stream: &mut UnixStream, line: &str) -> io::Result<String> {
     writeln!(stream, "{line}")?;
     let mut reply = String::new();
     BufReader::new(stream.try_clone()?).read_line(&mut reply)?;
-    Ok(reply.trim_end().to_string())
+    // Only the line ending: `info` replies can end in an empty, tab-separated field.
+    Ok(reply.trim_end_matches(['\n', '\r']).to_string())
 }
 
 /// `t- status [--follow]`: print status JSON. Following never ends on its
@@ -216,8 +227,142 @@ pub fn status(name: Option<&str>, follow: bool) -> io::Result<()> {
     }
 }
 
-/// `t- ctl ...`: send a command and report the reply. Returns success.
+/// One running timer, as `t- ctl list` shows it.
+#[derive(Debug, PartialEq, Eq)]
+struct Listed {
+    name: String,
+    pid: u32,
+    /// From the timer's `info` reply; `None` for a timer too old to know it.
+    info: Option<[String; 5]>,
+}
+
+impl Listed {
+    /// Mode, state, clock, title and sequence position, `?` when unknown.
+    fn fields(&self) -> [&str; 5] {
+        match &self.info {
+            Some([mode, state, clock, title, seg]) => [mode, state, clock, title, seg],
+            None => ["?", "?", "", "(older t-, try t- ctl status)", ""],
+        }
+    }
+}
+
+/// Parse an `info` reply (see `App::info_line`).
+fn parse_info(line: &str) -> Option<[String; 5]> {
+    if line.starts_with("error: ") {
+        return None;
+    }
+    let fields: Vec<String> = line.split('\t').map(str::to_string).collect();
+    fields.try_into().ok()
+}
+
+/// Every live timer (named `name`, if given), newest first.
+fn running(name: Option<&str>) -> Vec<Listed> {
+    sockets(name)
+        .into_iter()
+        .filter_map(|path| {
+            let (name, pid) = sock_name_and_pid(&path)?;
+            let Ok(mut s) = UnixStream::connect(&path) else {
+                let _ = std::fs::remove_file(&path);
+                return None;
+            };
+            let info = request(&mut s, "info").ok().as_deref().and_then(parse_info);
+            Some(Listed { name, pid, info })
+        })
+        .collect()
+}
+
+/// `t- ctl list [--json]`: a table (or JSON array) of the running timers.
+/// The newest is marked: it's the one `t- ctl` acts on without `--name`.
+fn list(name: Option<&str>, json: bool) -> io::Result<()> {
+    let timers = running(name);
+    let mut out = io::stdout().lock();
+    if json {
+        let items: Vec<String> = timers
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let [mode, state, clock, title, seg] = t.fields();
+                format!(
+                    r#"{{"name":{},"pid":{},"mode":{},"state":{},"clock":{},"title":{},"segment":{},"default":{}}}"#,
+                    json_str(&t.name),
+                    t.pid,
+                    json_str(mode),
+                    json_str(state),
+                    json_str(clock),
+                    json_str(title),
+                    json_str(seg),
+                    i == 0
+                )
+            })
+            .collect();
+        return writeln!(out, "[{}]", items.join(","));
+    }
+    if timers.is_empty() {
+        return writeln!(out, "no running timer");
+    }
+    let header = ["NAME", "PID", "MODE", "STATE", "CLOCK", "TITLE"];
+    let rows: Vec<[String; 6]> = timers
+        .iter()
+        .map(|t| {
+            let [mode, state, clock, title, seg] = t.fields();
+            let title = match (title, seg) {
+                (t, "") => t.to_string(),
+                ("", s) => s.to_string(),
+                (t, s) => format!("{t} · {s}"),
+            };
+            [
+                t.name.clone(),
+                t.pid.to_string(),
+                mode.into(),
+                state.into(),
+                clock.into(),
+                title,
+            ]
+        })
+        .collect();
+    let width = |col: usize| {
+        rows.iter()
+            .map(|r| r[col].chars().count())
+            .chain([header[col].len()])
+            .max()
+            .unwrap_or(0)
+    };
+    let widths: Vec<usize> = (0..header.len()).map(width).collect();
+    let line = |marker: &str, cells: &[&str]| {
+        let mut l = String::from(marker);
+        for (i, cell) in cells.iter().enumerate() {
+            if i + 1 == cells.len() {
+                l += cell;
+            } else {
+                let _ = write!(l, "{cell:w$}  ", w = widths[i]);
+            }
+        }
+        l.trim_end().to_string()
+    };
+    writeln!(out, "{}", line("  ", &header))?;
+    for (i, r) in rows.iter().enumerate() {
+        let cells: Vec<&str> = r.iter().map(String::as_str).collect();
+        writeln!(out, "{}", line(if i == 0 { "* " } else { "  " }, &cells))?;
+    }
+    Ok(())
+}
+
+/// `t- ctl ...`: send a command and report the reply, or for `status` and
+/// `list`, print what was asked for. Returns success.
 pub fn ctl(name: Option<&str>, command: &crate::cli::CtlCommand) -> Result<(), String> {
+    use crate::cli::CtlCommand;
+    let printed = match command {
+        CtlCommand::Status { follow } => Some(status(name, *follow)),
+        CtlCommand::List { json } => Some(list(name, *json)),
+        _ => None,
+    };
+    if let Some(result) = printed {
+        return match result {
+            // A pipe reader (`| head`, or Waybar) went away; nothing to report.
+            Err(e) if e.kind() != io::ErrorKind::BrokenPipe => Err(e.to_string()),
+            _ => Ok(()),
+        };
+    }
     let line = command.line()?;
     let mut s = connect(name).ok_or_else(|| match name {
         Some(n) => format!("no running timer called `{n}`"),
@@ -244,6 +389,23 @@ mod tests {
             Some(("focus".into(), 123))
         );
         assert_eq!(sock_name_and_pid(Path::new("/x/other")), None);
+    }
+
+    #[test]
+    fn info_replies() {
+        let fields = parse_info("headless\trunning\t02:41\ttea\t").unwrap();
+        assert_eq!(fields[0], "headless");
+        let t = Listed {
+            name: "tea".into(),
+            pid: 1,
+            info: Some(fields),
+        };
+        assert_eq!(t.fields(), ["headless", "running", "02:41", "tea", ""]);
+        // A timer from before `info` existed answers with an error.
+        assert_eq!(parse_info("error: unknown command `info` (try ...)"), None);
+        assert_eq!(parse_info("too\tfew"), None);
+        // An empty last field (no sequence) still counts.
+        assert!(parse_info("window\trunning\t25:00\tdeep work\t").is_some());
     }
 
     #[test]
