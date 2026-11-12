@@ -70,6 +70,29 @@ pub enum Kind {
     Off,
 }
 
+/// The effect names for `--list-effects`, one per line. In a terminal, ones
+/// with a note (`matrix`, `matrix-heavy`, `none`) get it beside them, dimmed;
+/// piped, it's plain names for scripts.
+pub fn list(color: bool) -> String {
+    use clap::ValueEnum;
+    use std::fmt::Write;
+    let values: Vec<clap::builder::PossibleValue> = Kind::value_variants()
+        .iter()
+        .filter_map(ValueEnum::to_possible_value)
+        .collect();
+    let width = values.iter().map(|v| v.get_name().len()).max().unwrap_or(0);
+    let mut out = String::new();
+    for v in &values {
+        let name = v.get_name();
+        // Writing to a String can't fail.
+        let _ = match v.get_help().filter(|_| color) {
+            Some(help) => writeln!(out, "{name:width$}  \x1b[2m{help}\x1b[0m"),
+            None => writeln!(out, "{name}"),
+        };
+    }
+    out
+}
+
 /// Effects picked at random when none are chosen: everything except the
 /// output-heavy `matrix-heavy`, which has to be asked for.
 pub fn default_pool() -> Vec<Kind> {

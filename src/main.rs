@@ -23,7 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use clap::{CommandFactory, Parser, ValueEnum};
+use clap::{CommandFactory, Parser};
 use crossterm::{
     event::{self, Event as TermEvent, KeyEventKind},
     terminal,
@@ -107,11 +107,7 @@ fn main() -> ExitCode {
     let default_theme = theme::detect_omarchy(&themes).unwrap_or(0);
 
     if cli.list_effects {
-        let names: String = effects::Kind::value_variants()
-            .iter()
-            .filter_map(|k| Some(format!("{}\n", k.to_possible_value()?.get_name())))
-            .collect();
-        return print_out(names.as_bytes());
+        return print_out(effects::list(theme::color_output()).as_bytes());
     }
     if cli.list_themes {
         return print_out(theme::list(&themes, default_theme).as_bytes());

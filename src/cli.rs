@@ -149,17 +149,23 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = TitleSize::Large, value_name = "SIZE")]
     pub title_size: TitleSize,
 
-    /// Effects to use, comma-separated [default: all but matrix-heavy, picked at random]
+    /// Effects to use, comma-separated, or none (see --list-effects)
+    /// [default: all but matrix-heavy, picked at random]
     // `Set` (not the default `Append`) so a command-line --effect replaces the config's list.
-    #[arg(short, long, value_enum, value_delimiter = ',', value_name = "NAMES", action = clap::ArgAction::Set)]
+    // The names are left out of --help (all 39, three times); --list-effects has them,
+    // and shell completion still offers them.
+    #[arg(short, long, value_enum, value_delimiter = ',', value_name = "NAMES", action = clap::ArgAction::Set,
+          hide_possible_values = true)]
     pub effect: Vec<effects::Kind>,
 
-    /// Effects for when the timer starts [default: as --effect]
-    #[arg(long, value_enum, value_delimiter = ',', value_name = "NAMES", action = clap::ArgAction::Set)]
+    /// Effects for when the timer starts (see --list-effects) [default: as --effect]
+    #[arg(long, value_enum, value_delimiter = ',', value_name = "NAMES", action = clap::ArgAction::Set,
+          hide_possible_values = true)]
     pub intro_effect: Vec<effects::Kind>,
 
-    /// Effects at zero and when a sequence moves on [default: as --effect]
-    #[arg(long, value_enum, value_delimiter = ',', value_name = "NAMES", action = clap::ArgAction::Set)]
+    /// Effects at zero and when a sequence moves on (see --list-effects) [default: as --effect]
+    #[arg(long, value_enum, value_delimiter = ',', value_name = "NAMES", action = clap::ArgAction::Set,
+          hide_possible_values = true)]
     pub zero_effect: Vec<effects::Kind>,
 
     /// Time effects to finish exactly as the clock reaches a multiple of SECS,
@@ -299,7 +305,7 @@ pub struct Cli {
     #[arg(long, conflicts_with = "config")]
     pub no_config: bool,
 
-    /// List the available effects and exit
+    /// List the available effects (with notes on a few, in a terminal) and exit
     #[arg(long)]
     pub list_effects: bool,
 

@@ -446,12 +446,17 @@ pub fn detect_omarchy(themes: &[Theme]) -> Option<usize> {
     find(themes, &omarchy_name()?)
 }
 
+/// Whether list output gets colors: stdout is a terminal and `NO_COLOR` isn't set.
+pub fn color_output() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
+}
+
 /// The theme names, each in its own colors with swatches, when stdout is a
 /// color terminal. Otherwise plain names, one per line, for scripts.
 pub fn list(themes: &[Theme], default: usize) -> String {
     use std::fmt::Write;
-    use std::io::IsTerminal;
-    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
+    let color = color_output();
     let mut out = String::new();
     if !color {
         for t in themes {
