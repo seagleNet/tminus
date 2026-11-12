@@ -27,7 +27,8 @@ that replay every so often.
 - **Accurate**: duration timers keep counting through suspend (Linux and
   macOS), and `--until` follows the wall clock, so it handles NTP corrections
   and DST. Count down to a time, a weekday or a date days away.
-- **Sequences** like pomodoro (`25m:work 5m:break x4`), with presets.
+- **Sequences** like `25m:work 5m:break x4`, a built-in `@pomodoro`, and your
+  own presets.
 - **Remote control and Waybar**: watch and steer a timer from your bar or
   keybindings, or run it with no window at all.
 - Tenths/hundredths of a second, a progress bar, large or small titles, and
@@ -103,7 +104,9 @@ Give several durations to run them back to back. Each can have a `:label`
 t- 25m:work 5m:break x4                    # four pomodoros
 t- 25m:work@nord 5m:break@everforest x4    # a theme per segment
 t- 50m:focus 10m:break --confirm           # wait for a key before each next segment
-t- @pomodoro                               # a preset from the config file
+t- @pomodoro                               # built in: 4×25m work with 5m breaks,
+                                           #   a 15m long break after the 4th
+t- @focus                                  # your own preset (see Configuration)
 ```
 
 The status line shows progress (`● ● ◐ ○`); `n`/`b` skip forward/back, and
@@ -192,8 +195,9 @@ status-align = "right"
 status-time = "now"     # or "left", "off"
 
 [presets]
-pomodoro = ["25m:work", "5m:break", "x4"]
+focus = ["50m:focus", "10m:break", "x3"]
 tea = ["3m:steep@gruvbox", "2m:cool"]
+pomodoro = ["30m:work", "5m:break", "x4"]   # replaces the built-in one
 ```
 
 Use `--config PATH` to read a different file, or `--no-config` to ignore it.

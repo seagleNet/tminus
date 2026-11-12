@@ -95,7 +95,8 @@ DURATION examples:  90   45s   5m   1h30m   \"1h 5m 10s\"   10:00   1:30:00
 SEQUENCES: give several durations, each optionally with a label and a theme,
 and `xN` to repeat what came before:
   t- 25m:work 5m:break x4          t- 25m:work@nord 5m:break@everforest
-  t- @pomodoro                     (a preset from the config file)
+  t- @pomodoro                     (built in: 4×25m work, 5m breaks, then 15m;
+                                   your own presets go in the config file)
 
 KEYS:
   space / p    pause / resume

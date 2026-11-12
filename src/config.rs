@@ -7,7 +7,7 @@
 //!
 //! The exceptions are `[themes.<name>]` tables, which define custom themes
 //! (see `theme::custom`), and the `[presets]` table of named sequences:
-//! `pomodoro = ["25m:work", "5m:break", "x4"]`, used as `t- @pomodoro`.
+//! `focus = ["50m:focus", "10m:break", "x3"]`, used as `t- @focus`.
 
 use std::{
     collections::HashMap,

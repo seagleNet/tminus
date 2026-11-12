@@ -3,7 +3,8 @@
 //! Each token is one of:
 //! * `DURATION[:LABEL][@THEME]`, e.g. `25m`, `25m:work`, `10:00:deep work@nord`
 //! * `xN` — repeat the segments listed before it (in this list) N times in all
-//! * `@PRESET` — the segments of a preset from the config's `[presets]` table
+//! * `@PRESET` — the segments of a preset: built in (`@pomodoro`) or from the
+//!   config's `[presets]` table, which can also replace a built-in one
 
 use std::{collections::HashMap, time::Duration};
 
@@ -19,8 +20,24 @@ pub struct Segment {
 
 const MAX_SEGMENTS: usize = 10_000;
 
+/// Presets that need no config. A config preset with the same name replaces one.
+const BUILTIN_PRESETS: &[(&str, &[&str])] = &[
+    // The Pomodoro Technique: four 25-minute work blocks with short breaks,
+    // and a long break after the fourth.
+    (
+        "pomodoro",
+        &["25m:work", "5m:break", "x3", "25m:work", "15m:long break"],
+    ),
+];
+
+/// Parse sequence tokens; `presets` are the config's, on top of the built-in ones.
 pub fn parse(tokens: &[String], presets: &HashMap<String, Vec<String>>) -> Result<Vec<Segment>, String> {
-    parse_level(tokens, presets, true)
+    let mut all: HashMap<String, Vec<String>> = BUILTIN_PRESETS
+        .iter()
+        .map(|(name, items)| ((*name).to_string(), items.iter().map(|t| (*t).to_string()).collect()))
+        .collect();
+    all.extend(presets.iter().map(|(k, v)| (k.clone(), v.clone())));
+    parse_level(tokens, &all, true)
 }
 
 fn parse_level(tokens: &[String], presets: &HashMap<String, Vec<String>>, top: bool) -> Result<Vec<Segment>, String> {
@@ -35,11 +52,7 @@ fn parse_level(tokens: &[String], presets: &HashMap<String, Vec<String>>, top: b
             let items = presets.get(&key).ok_or_else(|| {
                 let mut known: Vec<&str> = presets.keys().map(String::as_str).collect();
                 known.sort_unstable();
-                if known.is_empty() {
-                    format!("no preset `{name}` (define presets in the config's [presets] table)")
-                } else {
-                    format!("no preset `{name}` (available: {})", known.join(", "))
-                }
+                format!("no preset `{name}` (available: {})", known.join(", "))
             })?;
             out.extend(parse_level(items, presets, false).map_err(|e| format!("preset `{name}`: {e}"))?);
         } else if let Some(n) = repeat_count(token) {
@@ -56,7 +69,15 @@ fn parse_level(tokens: &[String], presets: &HashMap<String, Vec<String>>, top: b
                 out.extend(once.iter().cloned());
             }
         } else {
-            out.push(segment(token)?);
+            out.push(segment(token).map_err(|e| {
+                // `:pomodoro` or `pomodoro` for `@pomodoro`.
+                let word = token.trim_start_matches(':');
+                if presets.contains_key(&crate::theme::normalize(word)) {
+                    format!("can't understand `{token}`; did you mean `@{word}`?")
+                } else {
+                    e
+                }
+            })?);
         }
     }
     Ok(out)
@@ -94,7 +115,8 @@ fn segment(token: &str) -> Result<Segment, String> {
         }
     }
     Err(format!(
-        "can't understand `{token}` (expected a duration like 25m, optionally with :label and @theme)"
+        "can't understand `{token}` (expected a duration like 25m with an optional :label and @theme, \
+         xN to repeat, or @preset)"
     ))
 }
 
@@ -171,12 +193,39 @@ mod tests {
     }
 
     #[test]
+    fn builtin_pomodoro() {
+        let s = parse(&["@pomodoro".to_string()], &HashMap::new()).unwrap();
+        let plan: Vec<(u64, &str)> = s
+            .iter()
+            .map(|x| (x.dur.as_secs() / 60, x.label.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(
+            plan,
+            [
+                (25, "work"),
+                (5, "break"),
+                (25, "work"),
+                (5, "break"),
+                (25, "work"),
+                (5, "break"),
+                (25, "work"),
+                (15, "long break")
+            ]
+        );
+        // A config preset of the same name replaces it (see `p`).
+        assert_eq!(p(&["@pomodoro"]).unwrap().len(), 4);
+    }
+
+    #[test]
     fn errors() {
         assert!(p(&["x3"]).unwrap_err().contains("needs segments"));
         assert!(p(&["5m", "x0"]).unwrap_err().contains("repeat count"));
         assert!(p(&["5m", "x999999"]).unwrap_err().contains("repeat count"));
         assert!(p(&["@nope"]).unwrap_err().contains("available: loop, pomodoro"));
         assert!(p(&["@loop"]).unwrap_err().contains("can't include other presets"));
-        assert!(p(&["soon:work"]).unwrap_err().contains("can't understand"));
+        assert!(p(&["soon:work"]).unwrap_err().contains("or @preset"));
+        // A preset name without its @ gets a hint.
+        assert!(p(&[":pomodoro"]).unwrap_err().contains("did you mean `@pomodoro`?"));
+        assert!(p(&["Loop"]).unwrap_err().contains("did you mean `@Loop`?"));
     }
 }
