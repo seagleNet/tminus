@@ -378,6 +378,25 @@ fn running(name: Option<&str>) -> Vec<Listed> {
         .collect()
 }
 
+/// Names of the running timers, newest first, each with a short description
+/// (`headless, paused 02:59 · tea`), for shell completion of `t- ctl -n`.
+pub fn names_for_completion() -> Vec<(String, String)> {
+    running(None)
+        .into_iter()
+        .map(|t| {
+            let [mode, state, clock, title, seg] = t.fields();
+            let mut help = format!("{mode}, {state} {clock}").trim_end().to_string();
+            for extra in [title, seg] {
+                if !extra.is_empty() {
+                    help += " · ";
+                    help += extra;
+                }
+            }
+            (t.name, help)
+        })
+        .collect()
+}
+
 /// `t- ctl list [--json]`: a table (or JSON array) of the running timers.
 /// The newest is marked: it's the one `t- ctl` acts on without `--name`.
 fn list(name: Option<&str>, json: bool) -> io::Result<()> {

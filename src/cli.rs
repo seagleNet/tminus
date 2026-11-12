@@ -337,7 +337,7 @@ pub enum Command {
     /// Watch and control running timers: status, list, pause, add 5m, ...
     Ctl {
         /// Which timer, if several run (see `t- ctl list`) [default: the most recently started]
-        #[arg(short, long, global = true)]
+        #[arg(short, long, global = true, add = clap_complete::ArgValueCandidates::new(timer_candidates))]
         name: Option<String>,
         #[command(subcommand)]
         command: CtlCommand,
@@ -432,6 +432,15 @@ impl CtlCommand {
             CtlCommand::Stop { .. } => "stop".into(),
         })
     }
+}
+
+/// Shell completion for `t- ctl -n`: the running timers' names, described
+/// like `t- ctl list` shows them.
+fn timer_candidates() -> Vec<clap_complete::CompletionCandidate> {
+    crate::control::names_for_completion()
+        .into_iter()
+        .map(|(name, help)| clap_complete::CompletionCandidate::new(name).help(Some(help.into())))
+        .collect()
 }
 
 /// Shell completion for `--theme`: every theme `t-` knows here, i.e. the
