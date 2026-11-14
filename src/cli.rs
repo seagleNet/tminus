@@ -297,6 +297,11 @@ pub struct Cli {
     #[arg(long, hide = true, overrides_with = "headless")]
     pub no_headless: bool,
 
+    /// Only check the command line and config, then exit: nothing starts.
+    /// Errors go to stderr only, never to a notification (for launchers)
+    #[arg(long)]
+    pub check: bool,
+
     /// Where to carry on, from a timer handed over by `t- ctl attach`
     #[arg(long, hide = true)]
     pub resume_state: Option<String>,

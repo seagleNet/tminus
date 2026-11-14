@@ -56,11 +56,17 @@ fn fail(msg: &str) -> ExitCode {
 /// no terminal at all: started from a keybinding or a bar, stderr goes nowhere.
 fn report(msg: &str) {
     eprintln!("tminus: {msg}");
-    if no_terminal() {
+    if no_terminal() && !check_only() {
         let mut c = std::process::Command::new("notify-send");
         c.args(["tminus", msg]);
         run_detached(c);
     }
+}
+
+/// `--check`: whoever asked reads stderr, so no notifications. Looked up in
+/// the raw arguments, as it must hold for errors in parsing them too.
+fn check_only() -> bool {
+    std::env::args_os().any(|a| a == "--check")
 }
 
 /// Neither stdin, stdout nor stderr is a terminal. A script that only
@@ -93,7 +99,7 @@ fn parse_cli() -> Result<(Cli, Config), ExitCode> {
     // and means any error in the second parse must come from the config.
     let cli = Cli::try_parse_from(&argv).unwrap_or_else(|e| {
         // A bad option from a keybinding would otherwise fail silently.
-        if e.use_stderr() && no_terminal() {
+        if e.use_stderr() && no_terminal() && !check_only() {
             let msg = e.to_string();
             report(msg.lines().next().unwrap_or_default().trim_start_matches("error: "));
         }
@@ -177,14 +183,7 @@ fn main() -> ExitCode {
         steps.truncate(1);
     }
 
-    // Intro and at-zero effects fall back to --effect when not given.
-    let pool_or_default =
-        |chosen: &[effects::Kind]| effects::pool(if chosen.is_empty() { &cli.effect } else { chosen });
-    let pools = effects::Pools {
-        intro: pool_or_default(&cli.intro_effect),
-        replay: effects::pool(&cli.effect),
-        zero: pool_or_default(&cli.zero_effect),
-    };
+    let pools = effect_pools(&cli);
 
     if let Some(f) = &cli.sound
         && !f.is_file()
@@ -200,6 +199,10 @@ fn main() -> ExitCode {
             Err(e) => return fail(&e),
         },
     };
+    // Everything a start could trip over has been looked at by now.
+    if cli.check {
+        return ExitCode::SUCCESS;
+    }
     // Remote control is best effort for the TUI, but the point of --headless.
     let server = match name.as_deref().map(Server::start) {
         Some(Ok(s)) => Some(s),
@@ -244,6 +247,18 @@ fn main() -> ExitCode {
         Ok(false) if cli.view.is_some() => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(1),
         Err(e) => fail(&e.to_string()),
+    }
+}
+
+/// The effects to pick from at each moment. Intro and at-zero effects fall
+/// back to --effect when not given.
+fn effect_pools(cli: &Cli) -> effects::Pools {
+    let pool_or_default =
+        |chosen: &[effects::Kind]| effects::pool(if chosen.is_empty() { &cli.effect } else { chosen });
+    effects::Pools {
+        intro: pool_or_default(&cli.intro_effect),
+        replay: effects::pool(&cli.effect),
+        zero: pool_or_default(&cli.zero_effect),
     }
 }
 
