@@ -429,7 +429,10 @@ fn running(name: Option<&str>) -> Vec<Listed> {
                 let _ = std::fs::remove_file(&path);
                 return None;
             };
-            let info = request(&mut s, "info").ok().as_deref().and_then(parse_info);
+            // A timer that is quitting takes the connection but closes it
+            // without a word: it's gone. An older t- answers, with an error.
+            let reply = request(&mut s, "info").ok().filter(|r| !r.is_empty())?;
+            let info = parse_info(&reply);
             Some(Listed { name, pid, info })
         })
         .collect()
