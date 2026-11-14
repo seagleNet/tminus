@@ -29,7 +29,7 @@ that replay every so often.
   and DST. Count down to a time, a weekday or a date days away.
 - **Sequences** like `25m:work 5m:break x4`, a built-in `@pomodoro`, and your
   own presets.
-- **Remote control and Waybar**: watch and steer a timer from your bar or
+- **Remote control, Omarchy bar and Waybar**: watch and steer a timer from your bar or
   keybindings, or run it with no window at all.
 - Tenths/hundredths of a second, a progress bar, large or small titles, and
   overtime counting after zero.
@@ -129,7 +129,7 @@ at the end and at every segment change of a sequence:
 - `--exec CMD`: run a shell command; it gets `TMINUS_EVENT` (`segment` or
   `done`), `TMINUS_LABEL`, `TMINUS_NEXT` and `TMINUS_TITLE`
 
-## Remote control and Waybar
+## Remote control, Omarchy bar and Waybar
 
 Every running timer can be watched and controlled from outside:
 
@@ -140,6 +140,16 @@ t- ctl status --follow    # a line per change, for a Waybar custom module
 t- ctl toggle             # also: pause, resume, add 5m, sub 1m, restart, next, back, effect, stop
 t- ctl pause --all        # every running timer (also: resume --all, stop --all)
 t- ctl attach             # show a timer here, with its clock and effects
+```
+
+On Omarchy, add the bar widget
+([omarchy-tminus](https://github.com/seagleNet/omarchy-tminus)): it shows the
+newest timer in the bar (left click pauses, scrolling adds or takes time), and
+its popup lists every running timer with its controls, opens any of them in a
+terminal (`t- ctl attach`) and starts new ones.
+
+```sh
+omarchy plugin add https://github.com/seagleNet/omarchy-tminus --enable
 ```
 
 Waybar module:
