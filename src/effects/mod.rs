@@ -610,9 +610,9 @@ impl Effect for Matrix {
             }
         }
         self.drops.retain(|d| (d.y as i32 - d.len) < sc.sh);
-        for i in 0..sc.len() {
-            if t >= self.lock[i] {
-                sc.draw_from(f, i, head, (t - self.lock[i]) / 0.6);
+        for (i, &lock) in self.lock.iter().enumerate() {
+            if t >= lock {
+                sc.draw_from(f, i, head, (t - lock) / 0.6);
             }
         }
         t > RAIN_FOR && self.drops.is_empty() && t > self.last_lock + 0.6
@@ -639,10 +639,9 @@ impl Effect for Burn {
         const BURN: f32 = 0.6;
         const COOL: f32 = 0.6;
         let mut done = true;
-        for i in 0..sc.len() {
+        for (i, &jitter) in self.jitter.iter().enumerate() {
             let (r, c) = sc.rc(i);
-            let at =
-                (sc.th() - 1 - r) as f32 / sc.th() as f32 * 1.0 + c as f32 / sc.tw() as f32 * 0.25 + self.jitter[i];
+            let at = (sc.th() - 1 - r) as f32 / sc.th() as f32 * 1.0 + c as f32 / sc.tw() as f32 * 0.25 + jitter;
             let lt = t - at;
             if lt < BURN + COOL {
                 done = false;
@@ -707,9 +706,9 @@ impl Effect for Expand {
         const DUR: f32 = 1.1;
         let cx = sc.ox as f32 + sc.tw() as f32 / 2.0;
         let cy = sc.oy as f32 + sc.th() as f32 / 2.0;
-        for i in 0..sc.len() {
+        for (i, &delay) in self.delay.iter().enumerate() {
             let Some(cell) = sc.settled(i) else { continue };
-            let p = (t - self.delay[i]) / DUR;
+            let p = (t - delay) / DUR;
             if p < 0.0 {
                 continue;
             }

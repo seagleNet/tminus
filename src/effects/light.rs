@@ -123,9 +123,9 @@ pub fn randomsequence(sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
 
 impl Effect for RandomSequence {
     fn draw(&mut self, sc: &Scene, t: f32, f: &mut Frame) -> bool {
-        for i in 0..sc.len() {
-            if t >= self.appear[i] {
-                reveal(sc, f, i, t - self.appear[i], 0.3);
+        for (i, &appear) in self.appear.iter().enumerate() {
+            if t >= appear {
+                reveal(sc, f, i, t - appear, 0.3);
             }
         }
         t > max(&self.appear) + 0.3
@@ -202,9 +202,9 @@ impl Effect for Smoke {
     fn draw(&mut self, sc: &Scene, t: f32, f: &mut Frame) -> bool {
         const PUFFS: [char; 5] = ['░', '▒', '▓', '▒', '░'];
         let (start, dark) = (Rgb::hex("#7A7A7A"), Rgb::hex("#242424"));
-        for i in 0..sc.len() {
+        for (i, &arrive) in self.arrive.iter().enumerate() {
             let (x, y) = sc.pos(i);
-            let lt = t - self.arrive[i];
+            let lt = t - arrive;
             if lt < 0.0 {
                 if let Some(cell) = sc.settled(i) {
                     f.put(x, y, cell.ch, start);
@@ -323,9 +323,9 @@ impl Effect for LaserEtch {
         let cool = hexes(&["#ffe680", "#ff7b00"]);
         let laser = hexes(&["#ffffff", "#376cff"]);
         let sparks = hexes(&["#ffffff", "#ffe680", "#ff7b00", "#1a0900"]);
-        for i in 0..sc.len() {
+        for (i, &etch_at) in self.etch_at.iter().enumerate() {
             let Some(cell) = sc.settled(i) else { continue };
-            let age = t - self.etch_at[i];
+            let age = t - etch_at;
             if age < 0.0 {
                 continue;
             }
