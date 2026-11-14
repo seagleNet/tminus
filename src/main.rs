@@ -44,6 +44,8 @@ const MAX_EVENTS_PER_FRAME: usize = 64;
 const IDLE_FRAME: Duration = Duration::from_millis(50);
 /// How often headless mode wakes up.
 const HEADLESS_TICK: Duration = Duration::from_millis(100);
+/// How often a viewer (`t- ctl attach`) reads the state of the timer it shows.
+const VIEW_SYNC: Duration = Duration::from_millis(250);
 
 fn fail(msg: &str) -> ExitCode {
     report(msg);
@@ -190,9 +192,13 @@ fn main() -> ExitCode {
         return fail(&format!("sound file {} not found", f.display()));
     }
 
-    let name = match timer_name(&cli, config.name.as_deref()) {
-        Ok(n) => n,
-        Err(e) => return fail(&e),
+    // A viewer has no socket of its own: the timer it shows has the name.
+    let name = match cli.view {
+        Some(_) => None,
+        None => match timer_name(&cli, config.name.as_deref()) {
+            Ok(n) => n,
+            Err(e) => return fail(&e),
+        },
     };
     // Remote control is best effort for the TUI, but the point of --headless.
     let server = match name.as_deref().map(Server::start) {
@@ -210,7 +216,13 @@ fn main() -> ExitCode {
     }
 
     let mut app = App::new(&cli, pools, &themes, theme, steps, timer);
-    app.name.clone_from(&name);
+    app.name = cli.view.clone().or_else(|| name.clone());
+    app.viewing = cli.view.is_some();
+    if let Some(state) = &cli.resume_state
+        && let Err(e) = app.resume(state)
+    {
+        return fail(&e);
+    }
     let result = if cli.headless && !cli.demo {
         run_headless(&cli, app, server)
     } else {
@@ -227,7 +239,9 @@ fn main() -> ExitCode {
         r
     };
     match result {
+        // Closing a viewer is how it ends; the timer it showed runs on.
         Ok(true) => ExitCode::SUCCESS,
+        Ok(false) if cli.view.is_some() => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(1),
         Err(e) => fail(&e.to_string()),
     }
@@ -378,6 +392,13 @@ fn serve(server: &mut Option<Server>, app: &mut App, now: f64) -> bool {
         let reply = match req.line.as_str() {
             "status" => app.status_json(),
             "info" => app.info_line(app.cli.headless),
+            // `t- ctl attach`: pass the timer on to a process with a window.
+            "handover" if app.cli.headless && app.name.is_some() => {
+                let _ = writeln!(req.stream, "{}", control::handover_reply(&app.handover_state()));
+                return true;
+            }
+            "handover" => "error: this timer has a window already; attach without --take to view it".to_string(),
+            "state" => control::handover_reply(&app.handover_state()),
             "follow" => {
                 let status = app.status_json();
                 srv.follow(req.stream, &status);
@@ -475,6 +496,8 @@ fn run(cli: &Cli, app: &mut App, mut server: Option<Server>) -> std::io::Result<
     let frame_dur = Duration::from_secs_f64(1.0 / f64::from(cli.fps));
     let (w, h) = terminal::size()?;
     app.resize(w, h);
+    // A viewer (`t- ctl attach`) keeps in step with the timer it shows.
+    let mut synced_at: Option<Instant> = None;
 
     loop {
         let tick = Instant::now();
@@ -493,10 +516,16 @@ fn run(cli: &Cli, app: &mut App, mut server: Option<Server>) -> std::io::Result<
                     if !event::poll(Duration::ZERO)? {
                         break;
                     }
-                    if let TermEvent::Key(k) = event::read()?
-                        && k.kind != KeyEventKind::Release
-                        && app.on_key(k.code, k.modifiers, now)
-                    {
+                    let TermEvent::Key(k) = event::read()? else { continue };
+                    if k.kind == KeyEventKind::Release {
+                        continue;
+                    }
+                    // Keys that change the timer go to it; a viewer's own
+                    // state follows on the next sync, done right away.
+                    if let (Some(view), Some(line)) = (&cli.view, app.remote_line_for(k.code)) {
+                        control::send(view, line);
+                        synced_at = None;
+                    } else if app.on_key(k.code, k.modifiers, now) {
                         return Ok(app.completed());
                     }
                 }
@@ -512,8 +541,19 @@ fn run(cli: &Cli, app: &mut App, mut server: Option<Server>) -> std::io::Result<
         if serve(&mut server, app, now) {
             return Ok(app.completed());
         }
+        if let Some(view) = &cli.view
+            && synced_at.is_none_or(|t| t.elapsed() >= VIEW_SYNC)
+        {
+            synced_at = Some(Instant::now());
+            // The timer quit (or was stopped): nothing left to show.
+            let Some(state) = control::fetch_state(view) else {
+                return Ok(true);
+            };
+            app.sync(&state, now).map_err(std::io::Error::other)?;
+        }
         if let Some(event) = app.tick(now)
             && !cli.demo
+            && cli.view.is_none()
         {
             announce(cli, &event, Some(&mut term))?;
             if matches!(event, Event::Completed { .. }) && cli.exit {

@@ -40,6 +40,25 @@ impl BootInstant {
     pub fn elapsed(self) -> Duration {
         Self::now().0.saturating_sub(self.0)
     }
+
+    /// Time on this clock, which other processes on the machine read the
+    /// same way (Linux and macOS), so it can mark a moment for a handover.
+    pub fn since_boot(self) -> Duration {
+        self.0
+    }
+}
+
+/// A timer's state as handed from one process to another (`t- ctl attach`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Snapshot {
+    pub total: Duration,
+    pub elapsed: Duration,
+    /// When `elapsed` was read, on the boot clock.
+    pub at: Duration,
+    pub paused: bool,
+    /// An un-paused `--until` timer, which the new process sets up again
+    /// from the wall clock instead.
+    pub synced: bool,
 }
 
 /// A countdown of `total`, measured one of two ways.
@@ -125,6 +144,34 @@ impl Timer {
     /// True while still tracking the wall clock (an un-paused `--until`).
     pub fn synced(&self) -> bool {
         matches!(self.mode, Mode::Wall { .. })
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            total: self.total,
+            elapsed: self.elapsed(),
+            at: BootInstant::now().since_boot(),
+            paused: self.paused(),
+            synced: self.synced(),
+        }
+    }
+
+    /// Carry on from a snapshot taken by another process: a running timer
+    /// also counts the moments since then (the handover itself).
+    pub fn resumed(s: &Snapshot) -> Self {
+        let now = BootInstant::now();
+        let gap = if s.paused {
+            Duration::ZERO
+        } else {
+            now.since_boot().saturating_sub(s.at)
+        };
+        Timer {
+            total: s.total,
+            mode: Mode::Span {
+                accumulated: s.elapsed + gap,
+                running_since: (!s.paused).then_some(now),
+            },
+        }
     }
 }
 

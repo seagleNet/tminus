@@ -11,7 +11,7 @@ use crate::{
         Cli, DEMO_KEYS, KEYS, StatusAlign, StatusPos, StatusTime, TitleSize, format_clock, format_coarse, format_span,
         format_ticks, parse_duration,
     },
-    clock::Timer,
+    clock::{Snapshot, Timer},
     control::json_str,
     effects::{self, Moment, Pools},
     font,
@@ -172,6 +172,9 @@ pub struct App<'a> {
     help: bool,
     /// Set in `--demo` mode.
     demo: Option<Demo>,
+    /// Showing a timer that runs in another process (`t- ctl attach`):
+    /// its segment changes come from there (`sync`), not from `tick`.
+    pub viewing: bool,
 }
 
 impl<'a> App<'a> {
@@ -205,6 +208,7 @@ impl<'a> App<'a> {
             status_time: cli.status_time,
             help: false,
             demo,
+            viewing: false,
         };
         app.sample();
         app
@@ -249,6 +253,10 @@ impl<'a> App<'a> {
             return None;
         }
         if self.finished_at.is_some() || !self.left.is_zero() {
+            return None;
+        }
+        // A viewer moves on when the timer it shows does (see `sync`).
+        if self.viewing && !self.is_last() && !self.cli.confirm {
             return None;
         }
         self.next_moment = Moment::Zero;
@@ -573,6 +581,113 @@ impl<'a> App<'a> {
             json_str(class),
             json_str(class),
         )
+    }
+
+    /// Where this timer stands, for `t- ctl attach` to carry on in another
+    /// process: segment, total, elapsed and boot-clock nanoseconds, paused,
+    /// synced (see `resume`).
+    pub fn handover_state(&self) -> String {
+        let s = self.timer.snapshot();
+        format!(
+            "{} {} {} {} {} {}",
+            self.seg,
+            s.total.as_nanos(),
+            s.elapsed.as_nanos(),
+            s.at.as_nanos(),
+            u8::from(s.paused),
+            u8::from(s.synced)
+        )
+    }
+
+    /// Read a `handover_state` line: the segment and the timer's snapshot.
+    fn parse_state(&self, state: &str) -> Result<(usize, Snapshot), String> {
+        let bad = || format!("bad handover state {state:?}");
+        let f: Vec<&str> = state.split(' ').collect();
+        let [seg, total, elapsed, at, paused, synced] = f[..] else {
+            return Err(bad());
+        };
+        let nanos = |v: &str| -> Result<Duration, String> {
+            let n: u64 = v.parse().map_err(|_| bad())?;
+            Ok(Duration::from_nanos(n))
+        };
+        let flag = |v: &str| match v {
+            "0" => Ok(false),
+            "1" => Ok(true),
+            _ => Err(bad()),
+        };
+        let seg: usize = seg.parse().map_err(|_| bad())?;
+        if seg >= self.plan.len() {
+            return Err(bad());
+        }
+        let snapshot = Snapshot {
+            total: nanos(total)?,
+            elapsed: nanos(elapsed)?,
+            at: nanos(at)?,
+            paused: flag(paused)?,
+            synced: flag(synced)?,
+        };
+        Ok((seg, snapshot))
+    }
+
+    /// Carry on from `handover_state`, taken from the same command line in
+    /// another process. Called before the first frame. A segment that had
+    /// already run out stays done without a second bell or notification.
+    pub fn resume(&mut self, state: &str) -> Result<(), String> {
+        let (seg, snapshot) = self.parse_state(state)?;
+        if seg != self.seg {
+            self.go_to(seg, 0.0);
+        }
+        // A synced `--until` timer was set up from the wall clock again.
+        if !snapshot.synced {
+            self.timer = Timer::resumed(&snapshot);
+        }
+        self.next_moment = Moment::Intro;
+        self.sample();
+        if self.left.is_zero() {
+            // Done (or waiting with --confirm) already: no flash either.
+            self.finished_at = Some(-DONE_FLASH_FOR);
+        }
+        Ok(())
+    }
+
+    /// A viewer: take on the state of the timer it shows, read every few
+    /// frames. Its own clock runs on in between; this catches pauses, added
+    /// time and segment changes, made there or sent from here.
+    pub fn sync(&mut self, state: &str, now: f64) -> Result<(), String> {
+        let (seg, snapshot) = self.parse_state(state)?;
+        if seg != self.seg {
+            // Moving on by itself gets the flash it would have had here.
+            let moved_on = seg == self.seg + 1 && self.left.is_zero();
+            self.go_to(seg, now);
+            if moved_on {
+                self.switched_at = Some(now);
+            }
+        }
+        if !snapshot.synced {
+            self.timer = Timer::resumed(&snapshot);
+        }
+        self.sample();
+        // Time added after zero (or a restart) counts down again.
+        if !self.left.is_zero() {
+            self.finished_at = None;
+        }
+        Ok(())
+    }
+
+    /// In a viewer, the remote-control line a key stands for: the keys that
+    /// change the timer, which belongs to another process. Effects, theme,
+    /// title size, help and quitting stay with the viewer.
+    pub fn remote_line_for(&self, code: KeyCode) -> Option<&'static str> {
+        match code {
+            KeyCode::Char(' ' | 'p') => Some("toggle"),
+            KeyCode::Char('n') => Some("next"),
+            KeyCode::Enter if self.waiting() => Some("next"),
+            KeyCode::Char('b') => Some("back"),
+            KeyCode::Char('+' | '=') => Some("add 1m"),
+            KeyCode::Char('-' | '_') => Some("sub 1m"),
+            KeyCode::Char('r') => Some("restart"),
+            _ => None,
+        }
     }
 
     /// The reply to `info` (for `t- ctl list`): mode, state, clock, title and
@@ -1176,6 +1291,75 @@ mod tests {
             plan,
             timer,
         )
+    }
+
+    #[test]
+    fn handover_carries_on_where_it_stood() {
+        let cli = Cli::try_parse_from(["t-", "1m"]).unwrap();
+        let themes = crate::theme::builtin();
+        // Second segment, paused with 40s gone and 2m added.
+        let mut old = app_with(&cli, &themes, &[1, 3]);
+        old.remote("next", 0.0).unwrap();
+        old.remote("add 2m", 0.0).unwrap();
+        old.remote("pause", 0.0).unwrap();
+        old.timer = Timer::resumed(&crate::clock::Snapshot {
+            elapsed: Duration::from_secs(40),
+            ..old.timer.snapshot()
+        });
+        let mut new = app_with(&cli, &themes, &[1, 3]);
+        new.resume(&old.handover_state()).unwrap();
+        new.sample();
+        assert_eq!((new.seg, new.timer.total), (1, Duration::from_secs(5 * 60)));
+        assert_eq!((new.elapsed, new.timer.paused()), (Duration::from_secs(40), true));
+        assert_eq!((new.finished_at, new.tick(0.0)), (None, None));
+
+        // A finished timer stays finished, without announcing it again.
+        let mut old = app_with(&cli, &themes, &[1]);
+        old.remote("sub 2m", 0.0).unwrap();
+        assert!(old.tick(0.0).is_some());
+        let mut new = app_with(&cli, &themes, &[1]);
+        new.resume(&old.handover_state()).unwrap();
+        assert!(new.completed());
+        assert_eq!(new.tick(0.0), None);
+
+        let mut new = app_with(&cli, &themes, &[1]);
+        for bad in ["", "1 2 3", "5 1 1 1 0 0", "0 1 1 1 2 0", "0 x 1 1 0 0"] {
+            assert!(new.resume(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn viewer_follows_the_timer_it_shows() {
+        let cli = Cli::try_parse_from(["t-", "1m"]).unwrap();
+        let themes = crate::theme::builtin();
+        let mut owner = app_with(&cli, &themes, &[1, 3]);
+        let mut view = app_with(&cli, &themes, &[1, 3]);
+        view.viewing = true;
+        view.resume(&owner.handover_state()).unwrap();
+
+        // Paused and given more time there: the viewer shows it.
+        owner.remote("pause", 0.0).unwrap();
+        owner.remote("add 2m", 0.0).unwrap();
+        view.sync(&owner.handover_state(), 1.0).unwrap();
+        assert_eq!(
+            (view.timer.paused(), view.timer.total),
+            (true, Duration::from_secs(3 * 60))
+        );
+
+        // At zero the viewer waits for the timer to move on, then flashes.
+        owner.remote("sub 5m", 0.0).unwrap();
+        view.sync(&owner.handover_state(), 2.0).unwrap();
+        assert_eq!((view.tick(2.0), view.seg), (None, 0));
+        assert_eq!(owner.tick(2.0).map(|_| owner.seg), Some(1));
+        view.sync(&owner.handover_state(), 2.1).unwrap();
+        assert_eq!((view.seg, view.switched_at), (1, Some(2.1)));
+
+        // Keys that change the timer are sent to it; the rest stay local.
+        assert_eq!(view.remote_line_for(KeyCode::Char(' ')), Some("toggle"));
+        assert_eq!(view.remote_line_for(KeyCode::Char('+')), Some("add 1m"));
+        assert_eq!(view.remote_line_for(KeyCode::Enter), None);
+        assert_eq!(view.remote_line_for(KeyCode::Char('e')), None);
+        assert_eq!(view.remote_line_for(KeyCode::Char('q')), None);
     }
 
     #[test]

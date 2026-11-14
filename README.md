@@ -139,6 +139,7 @@ t- ctl status             # one line of JSON
 t- ctl status --follow    # a line per change, for a Waybar custom module
 t- ctl toggle             # also: pause, resume, add 5m, sub 1m, restart, next, back, effect, stop
 t- ctl pause --all        # every running timer (also: resume --all, stop --all)
+t- ctl attach             # show a timer here, with its clock and effects
 ```
 
 Waybar module:
@@ -168,6 +169,12 @@ bind = SUPER SHIFT, T, exec, t- ctl toggle
 
 Run without any terminal like this, tminus also shows its errors (a name
 that's taken, a mistyped option, no running timer) as desktop notifications.
+
+`t- ctl attach` shows a running timer in the terminal you run it in, with its
+big clock and effects: space, `n`, `+`, `-` and so on control the timer, and
+`q` closes only this view, leaving the timer running in the bar.
+`t- ctl attach --take` moves a headless timer into the terminal instead: it
+carries on there under the same name, and `q` ends it.
 
 Every timer has a unique name: the one you give with `-n`/`--name` (a name
 that's already in use is refused), else the preset's (`t- @pomodoro` →

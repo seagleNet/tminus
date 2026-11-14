@@ -3,18 +3,24 @@
 //! Every running timer listens on `$XDG_RUNTIME_DIR/tminus/<name>.<pid>.sock`
 //! (a private, per-user directory). The protocol is one line of text per
 //! connection: `status`, `follow` (stream status lines), `info` (one
-//! tab-separated line for `t- ctl list`), or a command such as `toggle` or
-//! `add 5m`; the reply is a JSON status line, the info line, `ok` or `error: ...`.
+//! tab-separated line for `t- ctl list`), `state` (for `t- ctl attach`: the
+//! timer's state and command line), `handover` (the same from a headless
+//! timer, which then quits: `t- ctl attach --take`), or
+//! a command such as `toggle` or `add 5m`; the reply is a JSON status line,
+//! the info line, `ok` or `error: ...`.
 
 use std::{
+    ffi::{OsStr, OsString},
     fmt::Write as _,
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, IsTerminal, Write},
     os::unix::{
+        ffi::{OsStrExt, OsStringExt},
         fs::PermissionsExt,
         net::{UnixListener, UnixStream},
+        process::CommandExt,
     },
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// Status line printed when no timer is running; empty text hides a Waybar module.
@@ -554,6 +560,9 @@ fn on_all(line: &str, done: &str) -> io::Result<()> {
 /// `list`, print what was asked for. Returns success.
 pub fn ctl(name: Option<&str>, command: &crate::cli::CtlCommand) -> Result<(), String> {
     use crate::cli::CtlCommand;
+    if let CtlCommand::Attach { take } = command {
+        return attach(name, *take);
+    }
     let printed = match command {
         CtlCommand::Status { follow } => Some(status(name, *follow)),
         CtlCommand::List { json } => Some(list(name, *json)),
@@ -590,9 +599,138 @@ pub fn ctl(name: Option<&str>, command: &crate::cli::CtlCommand) -> Result<(), S
     Ok(())
 }
 
+/// The reply to `state` and `handover`: `state` (see `App::handover_state`), then this
+/// process's command line, each argument hex-encoded (so tabs, newlines and
+/// non-UTF-8 bytes survive), all tab-separated. `--headless` is left out:
+/// the point is to get a window.
+pub fn handover_reply(state: &str) -> String {
+    let mut out = state.to_string();
+    let mut options = true;
+    for arg in std::env::args_os().skip(1) {
+        if options && arg == "--headless" {
+            continue;
+        }
+        if arg == "--" {
+            options = false;
+        }
+        out.push('\t');
+        out += &to_hex(&arg);
+    }
+    out
+}
+
+fn to_hex(arg: &OsStr) -> String {
+    arg.as_bytes().iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
+fn from_hex(s: &str) -> Option<OsString> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect::<Option<Vec<u8>>>()
+        .map(OsString::from_vec)
+}
+
+/// Split a `handover` reply into the state and the command line.
+fn parse_handover(reply: &str) -> Option<(String, Vec<OsString>)> {
+    let mut fields = reply.split('\t');
+    let state = fields.next().filter(|s| !s.is_empty())?.to_string();
+    let args = fields.map(from_hex).collect::<Option<Vec<_>>>()?;
+    Some((state, args))
+}
+
+/// The state part of a timer's `state` reply, for a viewer to keep in step;
+/// `None` once the timer is gone.
+pub fn fetch_state(name: &str) -> Option<String> {
+    let (mut s, _) = connect_path(Some(name))?;
+    let reply = request(&mut s, "state").ok()?;
+    parse_handover(&reply).map(|(state, _)| state)
+}
+
+/// Send a command line to the timer called `name`, best effort (a viewer's
+/// keys; the next `fetch_state` shows the result).
+pub fn send(name: &str, line: &str) {
+    if let Some((mut s, _)) = connect_path(Some(name)) {
+        let _ = request(&mut s, line);
+    }
+}
+
+/// `t- ctl attach`: show a timer in this terminal. Its command line (and
+/// config, read again) starts a window here, carrying on from its state:
+/// as a viewer (`--view`) that keeps in step with the timer and sends it
+/// the keys that change it, or, with `--take`, as the timer itself: a
+/// `--headless` timer hands over and quits, and this one takes its name.
+fn attach(name: Option<&str>, take: bool) -> Result<(), String> {
+    if !io::stdout().is_terminal() {
+        return Err("`attach` shows the timer in this terminal; run it in one".into());
+    }
+    let (mut s, path) = connect_path(name).ok_or_else(|| match name {
+        Some(n) => format!("no running timer called `{n}`"),
+        None => "no running timer".to_string(),
+    })?;
+    let (timer, _) = sock_name_and_pid(&path).ok_or("can't tell the timer's name")?;
+    let reply = request(&mut s, if take { "handover" } else { "state" }).map_err(|e| e.to_string())?;
+    if let Some(e) = reply.strip_prefix("error: ") {
+        if e.starts_with("unknown command") {
+            return Err(format!(
+                "`{timer}` runs an older t- that can't be attached; start it again"
+            ));
+        }
+        return Err(e.to_string());
+    }
+    let (state, args) = parse_handover(&reply).ok_or("garbled reply from the timer")?;
+    if take {
+        // The old process quits right after replying; its name must be free first.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while running_pid(&timer).is_some() {
+            if Instant::now() > deadline {
+                return Err(format!("`{timer}` didn't hand over (still running)"));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let role = if take { "--name" } else { "--view" };
+    // Ahead of the old arguments, so a `--` among them can't swallow these.
+    let err = std::process::Command::new(exe)
+        .arg0("t-")
+        .args(["--no-headless", role, &timer, "--resume-state", &state])
+        .args(args)
+        .exec();
+    Err(format!("can't start the timer's window: {err}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn handover_replies_round_trip() {
+        let args = [
+            "25m:work 5m:break".into(),
+            String::new(),
+            "-t".into(),
+            "tabs\tand\nlines".into(),
+        ];
+        let mut reply = "1 2 3 4 0 0".to_string();
+        for a in &args {
+            reply.push('\t');
+            reply += &to_hex(OsStr::new(a));
+        }
+        let (state, back) = parse_handover(&reply).unwrap();
+        assert_eq!(state, "1 2 3 4 0 0");
+        assert_eq!(back, args.iter().map(OsString::from).collect::<Vec<_>>());
+        assert_eq!(parse_handover("1 2 3 4 0 0").unwrap().1, Vec::<OsString>::new());
+        assert_eq!(parse_handover("1 2 3 4 0 0\tzz"), None);
+        assert_eq!(parse_handover("1 2 3 4 0 0\tabc"), None);
+        assert_eq!(parse_handover(""), None);
+    }
 
     #[test]
     fn helpers() {

@@ -297,6 +297,14 @@ pub struct Cli {
     #[arg(long, hide = true, overrides_with = "headless")]
     pub no_headless: bool,
 
+    /// Where to carry on, from a timer handed over by `t- ctl attach`
+    #[arg(long, hide = true)]
+    pub resume_state: Option<String>,
+
+    /// Only show the timer called NAME, which runs elsewhere (`t- ctl attach`)
+    #[arg(long, hide = true, value_name = "NAME", requires = "resume_state")]
+    pub view: Option<String>,
+
     /// Frames per second while animating
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u32).range(5..=240))]
     pub fps: u32,
@@ -398,6 +406,14 @@ pub enum CtlCommand {
         #[arg(short, long)]
         all: bool,
     },
+    /// Show a timer in this terminal, with its clock and effects; keys
+    /// control it, q closes only this view
+    Attach {
+        /// Move the timer into this terminal instead: it quits where it ran
+        /// (a --headless timer only), and q here ends it
+        #[arg(long)]
+        take: bool,
+    },
 }
 
 impl CtlCommand {
@@ -414,7 +430,7 @@ impl CtlCommand {
             CtlCommand::Back => format!("{timer}: previous segment"),
             CtlCommand::Effect => format!("{timer}: playing an effect"),
             CtlCommand::Stop { .. } => format!("stopped {timer}"),
-            CtlCommand::Status { .. } | CtlCommand::List { .. } => timer.to_string(),
+            CtlCommand::Status { .. } | CtlCommand::List { .. } | CtlCommand::Attach { .. } => timer.to_string(),
         }
     }
 
@@ -438,6 +454,8 @@ impl CtlCommand {
             CtlCommand::Back => "back".into(),
             CtlCommand::Effect => "effect".into(),
             CtlCommand::Stop { .. } => "stop".into(),
+            CtlCommand::Attach { take: true } => "handover".into(),
+            CtlCommand::Attach { take: false } => "state".into(),
         })
     }
 }
