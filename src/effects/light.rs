@@ -126,6 +126,10 @@ impl Effect for Sweep {
         const BAND: [char; 4] = ['█', '▓', '▒', '░'];
         let tw = sc.tw() as f32;
         let gray = const { Rgb::hex("#808080") };
+        // tte: each band symbol takes a random gray on the first pass and a
+        // random gradient color on the second.
+        let shades = const { hexes(["#A0A0A0", "#808080", "#404040", "#202020", "#101010"]) };
+        let pick = |i: usize, d: f32, pass: u64| hash(i as u64 ^ (d as u64) << 32 ^ pass << 40);
         let travel = |p: f32| -4.0 + (tw + 8.0) * ease_in_out_sine(p);
         let first = tw - travel(t / PASS); // right to left
         let second = travel((t - SECOND) / PASS); // left to right
@@ -134,18 +138,19 @@ impl Effect for Sweep {
             let (x, y) = sc.pos(i);
             let band = |edge: f32, behind_is_right: bool| {
                 let d = if behind_is_right { c - edge } else { edge - c };
-                (0.0..4.0).contains(&d).then(|| BAND[d as usize])
+                (0.0..4.0).contains(&d).then(|| (BAND[d as usize], d))
             };
             if t >= SECOND {
-                if let Some(ch) = band(second, false) {
-                    f.put(x, y, ch, sc.theme.flash);
+                if let Some((ch, d)) = band(second, false) {
+                    let u = (pick(i, d, 2) % 1000) as f32 / 1000.0;
+                    f.put(x, y, ch, sc.theme.gradient_at(u));
                 } else if c < second {
                     sc.draw_from(f, i, sc.theme.flash, (second - c) / 6.0);
                 } else if let Some(cell) = sc.settled(i) {
                     f.put(x, y, cell.ch, gray);
                 }
-            } else if let Some(ch) = band(first, true) {
-                f.put(x, y, ch, gray.lerp(WHITE, 0.4));
+            } else if let Some((ch, d)) = band(first, true) {
+                f.put(x, y, ch, shades[(pick(i, d, 1) % 5) as usize]);
             } else if c > first
                 && let Some(cell) = sc.settled(i)
             {
@@ -542,7 +547,7 @@ impl Effect for Thunderstorm {
         let bolt = const { Rgb::hex("#68A3E8") };
         let glow = const { Rgb::hex("#EF5411") };
         let spark = const { Rgb::hex("#ff4d00") };
-        let rain = const { Rgb::hex("#5d7a99") };
+        let rain = const { Rgb::hex("#aaaaff") };
         // How strongly the text glows after the latest strike.
         let since = self
             .strikes

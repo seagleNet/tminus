@@ -881,17 +881,24 @@ impl Effect for Rings {
 pub struct Blackhole {
     star: Vec<Pos>,
     star_glyph: Vec<char>,
+    /// Its shade in the starfield (tte: gray to white).
+    field_color: Vec<Rgb>,
+    /// Its color when the text explodes back.
     star_color: Vec<Rgb>,
     swallow_at: Vec<f32>,
 }
 
 pub fn blackhole(sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
-    let colors = const { hexes(["#ffcc0d", "#ff7326", "#ff194d"]) };
+    let colors = const { hexes(["#ffcc0d", "#ff7326", "#ff194d", "#bf2669", "#702a8c", "#049dbf"]) };
+    let dim = const { Rgb::hex("#4a4a4d") };
     let n = sc.len();
     Box::new(Blackhole {
         star: (0..n).map(|_| random_screen_pos(sc, rng)).collect(),
         star_glyph: (0..n)
             .map(|_| ['*', '\'', '`', '¤', '•', '°', '·'][rng.random_range(0..7)])
+            .collect(),
+        field_color: (0..n)
+            .map(|_| dim.lerp(WHITE, rng.random_range(0..6) as f32 / 5.0))
             .collect(),
         star_color: (0..n).map(|_| colors[rng.random_range(0..colors.len())]).collect(),
         swallow_at: (0..n).map(|_| rng.random_range(1.0..1.9)).collect(),
@@ -941,10 +948,10 @@ impl Effect for Blackhole {
                 } else {
                     1.0
                 };
-                put(f, self.star[i], self.star_glyph[i], self.star_color[i].scale(twinkle));
+                put(f, self.star[i], self.star_glyph[i], self.field_color[i].scale(twinkle));
             } else if t < self.swallow_at[i] + SWALLOW {
                 let p = ease_in_expo((t - self.swallow_at[i]) / SWALLOW);
-                put(f, lerp(self.star[i], c, p), self.star_glyph[i], self.star_color[i]);
+                put(f, lerp(self.star[i], c, p), self.star_glyph[i], self.field_color[i]);
             } else if t >= EXPLODE_AT {
                 let p = ((t - EXPLODE_AT) / EXPLODE).min(1.0);
                 let col = self.star_color[i].lerp(cell.fg, p);
