@@ -73,7 +73,7 @@ effects (highlight, colorshift, spotlights) are invisible in text snapshots.
 
 ## Release status
 
-- **Released:** 0.1.0, 0.2.0, 0.3.0 (all 2026-11-12), 0.3.1 and 0.4.0 (2026-11-14): public repo, tags with GitHub release
+- **Released:** 0.1.0, 0.2.0, 0.3.0 (all 2026-11-12), 0.3.1 and 0.4.0 (2026-11-14), 0.5.0 (2026-11-21): public repo, tags with GitHub release
   binaries (`release.yml`), published on crates.io (`cargo install tminus`). The README GIFs
   are still the 0.1.0 recordings (URLs pinned to `v0.1.0`).
 - Next release: bump `version` in Cargo.toml, tag `vX.Y.Z` (the push runs `release.yml`),
