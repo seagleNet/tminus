@@ -199,7 +199,16 @@ fn main() -> ExitCode {
             Err(e) => return fail(&e),
         },
     };
-    // Everything a start could trip over has been looked at by now.
+    let mut app = App::new(&cli, pools, &themes, theme, steps, timer);
+    app.name = cli.view.clone().or_else(|| name.clone());
+    app.viewing = cli.view.is_some();
+    if let Some(state) = &cli.resume_state
+        && let Err(e) = app.resume(state)
+    {
+        return fail(&e);
+    }
+    // Everything a start could trip over has been looked at by now (the
+    // resume state too: `t- ctl attach --take` checks before the handover).
     if cli.check {
         return ExitCode::SUCCESS;
     }
@@ -218,14 +227,6 @@ fn main() -> ExitCode {
         eprintln!("tminus: started as {n} (t- ctl list, t- ctl ... -n {n})");
     }
 
-    let mut app = App::new(&cli, pools, &themes, theme, steps, timer);
-    app.name = cli.view.clone().or_else(|| name.clone());
-    app.viewing = cli.view.is_some();
-    if let Some(state) = &cli.resume_state
-        && let Err(e) = app.resume(state)
-    {
-        return fail(&e);
-    }
     let result = if cli.headless && !cli.demo {
         run_headless(&cli, app, server)
     } else {
@@ -356,7 +357,14 @@ fn build_plan(
     find_theme: &dyn Fn(&str) -> Result<usize, String>,
 ) -> Result<(Vec<Step>, Timer), String> {
     if let Some(u) = &cli.until {
-        let timer = Timer::until(clock::parse_until(u)?);
+        // Carrying on after `t- ctl attach`, the state says where the target
+        // is: `u` read again may name another day by now (`tomorrow 9:00`),
+        // or be in the past. `App::resume` sets the timer and its length.
+        let target = match cli.resume_state {
+            Some(_) => std::time::SystemTime::now(),
+            None => clock::parse_until(u)?,
+        };
+        let timer = Timer::until(target);
         return Ok((
             vec![Step {
                 dur: timer.total,
@@ -409,11 +417,15 @@ fn serve(server: &mut Option<Server>, app: &mut App, now: f64) -> bool {
             "info" => app.info_line(app.cli.headless),
             // `t- ctl attach`: pass the timer on to a process with a window.
             "handover" if app.cli.headless && app.name.is_some() => {
-                let _ = writeln!(req.stream, "{}", control::handover_reply(&app.handover_state()));
+                let _ = writeln!(
+                    req.stream,
+                    "{}",
+                    control::handover_reply(&app.handover_state(), std::env::args_os().skip(1))
+                );
                 return true;
             }
             "handover" => "error: this timer has a window already; attach without --take to view it".to_string(),
-            "state" => control::handover_reply(&app.handover_state()),
+            "state" => control::handover_reply(&app.handover_state(), std::env::args_os().skip(1)),
             "follow" => {
                 let status = app.status_json();
                 srv.follow(req.stream, &status);

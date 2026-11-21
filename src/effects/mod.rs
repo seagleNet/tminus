@@ -216,10 +216,7 @@ pub fn make(kind: Kind, sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
             from_left: rng.random(),
         }),
         Kind::Swarm => {
-            let (sw, sh) = (sc.sw as f32, sc.sh as f32);
-            let start = (0..n)
-                .map(|_| (rng.random_range(0.0..sw), rng.random_range(0.0..sh)))
-                .collect();
+            let start = (0..n).map(|_| motion::random_screen_pos(sc, rng)).collect();
             let hue = rand_vec!(0.0, 1.0);
             Box::new(Swarm {
                 start,
@@ -309,6 +306,27 @@ fn row_gap(sc: &Scene, gap: f32) -> f32 {
 /// Fade from the theme flash color into the settled color after a reveal.
 fn reveal(sc: &Scene, f: &mut Frame, i: usize, since: f32, fade: f32) {
     sc.draw_from(f, i, sc.theme.flash, since / fade);
+}
+
+const WHITE: Rgb = Rgb(255, 255, 255);
+
+/// Colors from `#rrggbb` strings. Use it as `const { hexes([...]) }`, so a
+/// typo fails the build, and nothing is parsed per frame.
+const fn hexes<const N: usize>(list: [&str; N]) -> [Rgb; N] {
+    let mut out = [Rgb(0, 0, 0); N];
+    let mut i = 0;
+    while i < N {
+        out[i] = Rgb::hex(list[i]);
+        i += 1;
+    }
+    out
+}
+
+/// Pick from a color list by a fraction in 0..1, first to last, blending neighbours.
+fn palette(colors: &[Rgb], u: f32) -> Rgb {
+    let x = u.clamp(0.0, 1.0) * (colors.len() - 1) as f32;
+    let i = (x as usize).min(colors.len() - 1);
+    colors[i].lerp(colors[(i + 1).min(colors.len() - 1)], x.fract())
 }
 
 fn max(v: &[f32]) -> f32 {
@@ -587,9 +605,9 @@ impl Effect for Matrix {
                 });
             }
         }
-        let green = Rgb::hex("#00ff41");
-        let dark = Rgb::hex("#003b10");
-        let head = Rgb::hex("#d0ffd8");
+        let green = const { Rgb::hex("#00ff41") };
+        let dark = const { Rgb::hex("#003b10") };
+        let head = const { Rgb::hex("#d0ffd8") };
         for d in &mut self.drops {
             d.y += d.speed * dt;
             let hy = d.y.floor() as i32;
@@ -663,7 +681,12 @@ impl Effect for Burn {
                     f.put(x, y - 1, '·', sc.theme.dim);
                 }
             } else {
-                f.put(x, y, cell.ch, Rgb::hex("#ff8c00").lerp(cell.fg, (lt - BURN) / COOL));
+                f.put(
+                    x,
+                    y,
+                    cell.ch,
+                    const { Rgb::hex("#ff8c00") }.lerp(cell.fg, (lt - BURN) / COOL),
+                );
             }
         }
         done
@@ -920,6 +943,10 @@ mod tests {
             (font::shadow("12:34"), 80, 24),
             (font::plain("0:01"), 10, 3),
             (font::block("59:59", 3), 120, 40),
+            // `--done-text ""`: nothing to show.
+            (font::plain(""), 80, 24),
+            // A terminal that reports no size yet.
+            (font::plain("0:01"), 0, 0),
         ];
         for (g, sw, sh) in layouts {
             let mut target = Target::empty();

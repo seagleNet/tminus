@@ -157,7 +157,8 @@ impl Timer {
     }
 
     /// Carry on from a snapshot taken by another process: a running timer
-    /// also counts the moments since then (the handover itself).
+    /// also counts the moments since then (the handover itself). A synced
+    /// `--until` timer keeps following the wall clock, to the same target.
     pub fn resumed(s: &Snapshot) -> Self {
         let now = BootInstant::now();
         let gap = if s.paused {
@@ -165,13 +166,19 @@ impl Timer {
         } else {
             now.since_boot().saturating_sub(s.at)
         };
-        Timer {
-            total: s.total,
-            mode: Mode::Span {
-                accumulated: s.elapsed + gap,
+        let elapsed = s.elapsed.saturating_add(gap);
+        let mode = if s.synced {
+            let wall = SystemTime::now();
+            Mode::Wall {
+                started: wall.checked_sub(elapsed).unwrap_or(wall),
+            }
+        } else {
+            Mode::Span {
+                accumulated: elapsed,
                 running_since: (!s.paused).then_some(now),
-            },
-        }
+            }
+        };
+        Timer { total: s.total, mode }
     }
 }
 
@@ -323,6 +330,24 @@ mod tests {
         // 2026-03-29 02:30 doesn't exist in Berlin: the first valid minute after.
         let now = berlin(2026, 3, 20, 12, 0);
         assert_eq!(resolve_until(&now, "2026-03-29 02:30"), Ok(berlin(2026, 3, 29, 3, 0)));
+    }
+
+    #[test]
+    fn resuming_a_wall_timer_keeps_its_target() {
+        let t = Timer::until(SystemTime::now() + Duration::from_secs(600));
+        let left = |t: &Timer| t.total.saturating_sub(t.elapsed()).as_secs_f32();
+        let r = Timer::resumed(&Snapshot {
+            elapsed: Duration::from_secs(100),
+            ..t.snapshot()
+        });
+        assert!(r.synced());
+        assert!((499.0..=500.0).contains(&left(&r)), "{}", left(&r));
+        // Past the target: the overtime carries on too.
+        let r = Timer::resumed(&Snapshot {
+            elapsed: Duration::from_secs(700),
+            ..t.snapshot()
+        });
+        assert!(r.synced() && r.elapsed() >= Duration::from_secs(700));
     }
 
     #[test]

@@ -6,7 +6,7 @@
 
 use rand::{Rng, RngExt, seq::SliceRandom};
 
-use super::{Effect, max, reveal};
+use super::{Effect, WHITE, hexes, max, palette, reveal};
 use crate::{
     scene::Scene,
     term::Frame,
@@ -18,8 +18,6 @@ use crate::{
 };
 
 type Pos = (f32, f32);
-
-const WHITE: Rgb = Rgb(255, 255, 255);
 
 /// Indices of the cells that currently show something.
 fn ink(sc: &Scene) -> Vec<usize> {
@@ -43,7 +41,7 @@ fn put(f: &mut Frame, p: Pos, ch: char, col: Rgb) {
     f.put(p.0.round() as i32, p.1.round() as i32, ch, col);
 }
 
-fn random_screen_pos(sc: &Scene, rng: &mut impl Rng) -> Pos {
+pub(super) fn random_screen_pos(sc: &Scene, rng: &mut impl Rng) -> Pos {
     (
         rng.random_range(0.0..sc.sw.max(1) as f32),
         rng.random_range(0.0..sc.sh.max(1) as f32),
@@ -59,17 +57,6 @@ fn random_edge_pos(sc: &Scene, rng: &mut impl Rng) -> Pos {
         2 => (0.0, rng.random_range(0.0..=h)),
         _ => (w, rng.random_range(0.0..=h)),
     }
-}
-
-fn hexes(list: &[&str]) -> Vec<Rgb> {
-    list.iter().map(|h| Rgb::hex(h)).collect()
-}
-
-/// Pick from a color list by a fraction in 0..1, blending neighbours.
-fn palette(colors: &[Rgb], u: f32) -> Rgb {
-    let x = u.clamp(0.0, 1.0) * (colors.len() - 1) as f32;
-    let i = (x as usize).min(colors.len() - 1);
-    colors[i].lerp(colors[(i + 1).min(colors.len() - 1)], x.fract())
 }
 
 // --- travel: the shared "fly from somewhere into place" effect ------------
@@ -186,7 +173,7 @@ pub fn pour(sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
 /// bouncyballs: characters drop from above as balls and bounce into place.
 pub fn bouncyballs(sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
     let n = sc.len();
-    let colors = hexes(&["#d1f4a5", "#96e2a4", "#5acda9"]);
+    let colors = const { hexes(["#d1f4a5", "#96e2a4", "#5acda9"]) };
     let th = sc.th() as f32;
     let start = (0..n)
         .map(|i| (target(sc, i).0, -1.0 - rng.random_range(0.0..4.0)))
@@ -296,7 +283,7 @@ impl BinaryPath {
 
 impl Effect for BinaryPath {
     fn draw(&mut self, sc: &Scene, t: f32, f: &mut Frame) -> bool {
-        let greens = hexes(&["#044E29", "#157e38", "#45bf55", "#95ed87"]);
+        let greens = const { hexes(["#044E29", "#157e38", "#45bf55", "#95ed87"]) };
         for i in 0..sc.len() {
             let ch = sc.ch(i);
             if ch == ' ' || t < self.delay[i] {
@@ -358,7 +345,7 @@ pub fn errorcorrect(sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
 
 impl Effect for ErrorCorrect {
     fn draw(&mut self, sc: &Scene, t: f32, f: &mut Frame) -> bool {
-        let (error, correct) = (Rgb::hex("#e74c3c"), Rgb::hex("#45bf55"));
+        let (error, correct) = (const { Rgb::hex("#e74c3c") }, const { Rgb::hex("#45bf55") });
         for i in 0..sc.len() {
             let Some(cell) = sc.settled(i) else { continue };
             let j = self.partner[i];
@@ -412,7 +399,7 @@ impl Effect for Unstable {
         const BURST: f32 = 0.6;
         const HOLD: f32 = 0.2;
         const BACK: f32 = 0.9;
-        let orange = Rgb::hex("#ff9200");
+        let orange = const { Rgb::hex("#ff9200") };
         for i in 0..sc.len() {
             let Some(cell) = sc.settled(i) else { continue };
             let (pos, col) = if t < RUMBLE {
@@ -466,7 +453,7 @@ impl Effect for Crumble {
         const SUCK: f32 = 0.5;
         const FORM_AT: f32 = 2.5;
         const FORM: f32 = 0.8;
-        let gray = Rgb::hex("#808080");
+        let gray = const { Rgb::hex("#808080") };
         let bottom = (sc.sh - 1) as f32;
         for i in 0..sc.len() {
             let Some(cell) = sc.settled(i) else { continue };
@@ -523,7 +510,7 @@ const BURST: f32 = 0.35;
 const DROP: f32 = 0.8;
 
 pub fn fireworks(sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
-    let colors = hexes(&["#88F7E2", "#44D492", "#F5EB67", "#FFA15C", "#FA233E"]);
+    let colors = const { hexes(["#88F7E2", "#44D492", "#F5EB67", "#FFA15C", "#FA233E"]) };
     let mut cells = ink(sc);
     cells.sort_by_key(|&i| (sc.rc(i).1, sc.rc(i).0));
     let per = (cells.len() as f32 * 0.05).ceil().max(3.0) as usize;
@@ -619,7 +606,7 @@ const POP: f32 = 0.15;
 const RELEASE: f32 = 0.5;
 
 pub fn bubbles(sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
-    let colors = hexes(&["#d33aff", "#7395c4", "#43c2a7", "#02ff7f"]);
+    let colors = const { hexes(["#d33aff", "#7395c4", "#43c2a7", "#02ff7f"]) };
     let mut cells = ink(sc);
     cells.shuffle(rng);
     let mut bubble = vec![usize::MAX; sc.len()];
@@ -847,7 +834,7 @@ impl Effect for Rings {
         const SPIN_END: f32 = 2.4;
         const SCATTER_END: f32 = 2.9;
         const HOME_END: f32 = 3.8;
-        let colors = hexes(&["#ab48ff", "#e7b2b2", "#fffebd"]);
+        let colors = const { hexes(["#ab48ff", "#e7b2b2", "#fffebd"]) };
         let c = center(sc);
         for i in 0..sc.len() {
             let Some(cell) = sc.settled(i) else { continue };
@@ -894,17 +881,24 @@ impl Effect for Rings {
 pub struct Blackhole {
     star: Vec<Pos>,
     star_glyph: Vec<char>,
+    /// Its shade in the starfield (tte: gray to white).
+    field_color: Vec<Rgb>,
+    /// Its color when the text explodes back.
     star_color: Vec<Rgb>,
     swallow_at: Vec<f32>,
 }
 
 pub fn blackhole(sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
-    let colors = hexes(&["#ffcc0d", "#ff7326", "#ff194d"]);
+    let colors = const { hexes(["#ffcc0d", "#ff7326", "#ff194d", "#bf2669", "#702a8c", "#049dbf"]) };
+    let dim = const { Rgb::hex("#4a4a4d") };
     let n = sc.len();
     Box::new(Blackhole {
         star: (0..n).map(|_| random_screen_pos(sc, rng)).collect(),
         star_glyph: (0..n)
             .map(|_| ['*', '\'', '`', '¤', '•', '°', '·'][rng.random_range(0..7)])
+            .collect(),
+        field_color: (0..n)
+            .map(|_| dim.lerp(WHITE, rng.random_range(0..6) as f32 / 5.0))
             .collect(),
         star_color: (0..n).map(|_| colors[rng.random_range(0..colors.len())]).collect(),
         swallow_at: (0..n).map(|_| rng.random_range(1.0..1.9)).collect(),
@@ -938,7 +932,11 @@ impl Effect for Blackhole {
                     f,
                     c,
                     ['◦', '◎', '◉', '●', '◉', '◎', '◦'][k],
-                    self.star_color[k % self.star_color.len().max(1)],
+                    // No stars at all on an empty canvas (`--done-text ""`).
+                    self.star_color
+                        .get(k % self.star_color.len().max(1))
+                        .copied()
+                        .unwrap_or(WHITE),
                 );
             }
         }
@@ -950,10 +948,10 @@ impl Effect for Blackhole {
                 } else {
                     1.0
                 };
-                put(f, self.star[i], self.star_glyph[i], self.star_color[i].scale(twinkle));
+                put(f, self.star[i], self.star_glyph[i], self.field_color[i].scale(twinkle));
             } else if t < self.swallow_at[i] + SWALLOW {
                 let p = ease_in_expo((t - self.swallow_at[i]) / SWALLOW);
-                put(f, lerp(self.star[i], c, p), self.star_glyph[i], self.star_color[i]);
+                put(f, lerp(self.star[i], c, p), self.star_glyph[i], self.field_color[i]);
             } else if t >= EXPLODE_AT {
                 let p = ((t - EXPLODE_AT) / EXPLODE).min(1.0);
                 let col = self.star_color[i].lerp(cell.fg, p);

@@ -103,12 +103,17 @@ fn segment(token: &str) -> Result<Segment, String> {
         Some((rest, theme)) if !theme.is_empty() => (rest, Some(theme.to_string())),
         _ => (token, None),
     };
-    if let Ok(dur) = parse_duration(rest) {
-        return Ok(Segment {
-            dur,
-            label: None,
-            theme,
-        });
+    match parse_duration(rest) {
+        // A real duration, only too long: say so, not "can't understand".
+        Err(e) if e.contains("too long") => return Err(e),
+        Err(_) => {}
+        Ok(dur) => {
+            return Ok(Segment {
+                dur,
+                label: None,
+                theme,
+            });
+        }
     }
     for (i, _) in rest.match_indices(':').rev() {
         if let Ok(dur) = parse_duration(&rest[..i]) {

@@ -112,6 +112,9 @@ pub struct Term {
     shown: Option<Frame>,
     /// The terminal's own background color, if it told us.
     background: Option<Rgb>,
+    /// Clearing fills with the current background color (terminfo `bce`),
+    /// so a background fill needn't print every blank cell.
+    bce: bool,
 }
 
 impl Term {
@@ -142,6 +145,7 @@ impl Term {
             #[cfg(unix)]
             tty,
             background,
+            bce: back_color_erase(),
         })
     }
 
@@ -213,10 +217,12 @@ impl Term {
         queue!(self.out, terminal::BeginSynchronizedUpdate)?;
         if full {
             queue!(self.out, ResetColor)?;
-            match f.bg {
-                Some(Rgb(r, g, b)) => queue!(self.out, SetBackgroundColor(Color::Rgb { r, g, b }))?,
-                // Clearing with the default background is enough when there's no fill.
-                None => queue!(self.out, terminal::Clear(terminal::ClearType::All))?,
+            if let Some(Rgb(r, g, b)) = f.bg {
+                queue!(self.out, SetBackgroundColor(Color::Rgb { r, g, b }))?;
+            }
+            // Without a fill, or with `bce`, clearing paints the blank cells.
+            if f.bg.is_none() || self.bce {
+                queue!(self.out, terminal::Clear(terminal::ClearType::All))?;
             }
             match &mut self.shown {
                 Some(s) => s.clone_from(f),
@@ -232,7 +238,7 @@ impl Term {
                 let new = f.cells[i];
                 if full {
                     // Blank cells were cleared already unless there's a fill to paint.
-                    if new.is_none() && f.bg.is_none() {
+                    if new.is_none() && (f.bg.is_none() || self.bce) {
                         continue;
                     }
                 } else {
@@ -272,6 +278,20 @@ impl Term {
         queue!(self.out, terminal::EndSynchronizedUpdate)?;
         self.out.flush()
     }
+}
+
+/// Whether the terminal's terminfo entry has `bce` (background color erase).
+/// `tput` exits 0 only when it does; no `tput`, or an unknown or older
+/// terminal (`screen`), means no, which keeps painting every blank cell.
+fn back_color_erase() -> bool {
+    use std::process::{Command, Stdio};
+    Command::new("tput")
+        .arg("bce")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// Ask the terminal for its background color (OSC 11). A device-attributes

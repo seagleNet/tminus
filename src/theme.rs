@@ -83,11 +83,16 @@ pub enum Origin {
 impl Theme {
     /// Sample the gradient as a loop: `u` wraps, so drifting it is seamless.
     pub fn gradient_at(&self, u: f32) -> Rgb {
-        let n = self.gradient.len();
-        let x = u.rem_euclid(1.0) * n as f32;
-        let i = x.floor() as usize % n;
-        self.gradient[i].lerp(self.gradient[(i + 1) % n], x.fract())
+        cycle(&self.gradient, u)
     }
+}
+
+/// Sample a color list as a loop, blending neighbours: `u` wraps around.
+pub fn cycle(colors: &[Rgb], u: f32) -> Rgb {
+    let n = colors.len();
+    let x = u.rem_euclid(1.0) * n as f32;
+    let i = x.floor() as usize % n;
+    colors[i].lerp(colors[(i + 1) % n], x.fract())
 }
 
 /// A built-in theme, checked at compile time.
