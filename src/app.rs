@@ -637,9 +637,11 @@ impl<'a> App<'a> {
         if seg != self.seg {
             self.go_to(seg, 0.0);
         }
-        // A synced `--until` timer was set up from the wall clock again.
-        if !snapshot.synced {
-            self.timer = Timer::resumed(&snapshot);
+        self.timer = Timer::resumed(&snapshot);
+        // `--until` isn't read again when resuming (see `main::build_plan`):
+        // its length comes from here, for `b` to restart.
+        if self.cli.until.is_some() {
+            self.plan[seg].dur = snapshot.total;
         }
         self.next_moment = Moment::Intro;
         self.sample();
@@ -663,9 +665,7 @@ impl<'a> App<'a> {
                 self.switched_at = Some(now);
             }
         }
-        if !snapshot.synced {
-            self.timer = Timer::resumed(&snapshot);
-        }
+        self.timer = Timer::resumed(&snapshot);
         self.sample();
         // Time added after zero (or a restart) counts down again.
         if !self.left.is_zero() {

@@ -212,6 +212,8 @@ impl Server {
     pub fn start(name: &str) -> io::Result<Server> {
         let dir = socket_dir();
         std::fs::create_dir_all(&dir)?;
+        // Before the chmod, which would follow a symlink.
+        check_owner(&dir)?;
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
         let path = dir.join(format!("{}.{}.sock", sanitize(name), std::process::id()));
         let _ = std::fs::remove_file(&path);
@@ -269,12 +271,32 @@ impl Drop for Server {
     }
 }
 
-/// Connect to a running timer: the one called `name`, else the newest.
-/// Sockets left behind by timers that died are removed along the way.
+/// `dir` must be a real directory (not a symlink) of this user's. In the
+/// shared `/tmp` (no `$XDG_RUNTIME_DIR`, e.g. on macOS) another user could
+/// have made it first and answer as a timer, even to `t- ctl attach`, which
+/// runs the command line it is sent.
+fn check_owner(dir: &Path) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::symlink_metadata(dir)?;
+    // SAFETY: getuid has no preconditions and cannot fail.
+    if meta.is_dir() && meta.uid() == unsafe { libc::getuid() } {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{} isn't a directory of this user's", dir.display()),
+        ))
+    }
+}
+
 /// Timer sockets (optionally only those named `name`), newest first.
 fn sockets(name: Option<&str>) -> Vec<PathBuf> {
     let want = name.map(sanitize);
-    let Ok(dir) = std::fs::read_dir(socket_dir()) else {
+    let dir = socket_dir();
+    if check_owner(&dir).is_err() {
+        return vec![];
+    }
+    let Ok(dir) = std::fs::read_dir(dir) else {
         return vec![];
     };
     let mut socks: Vec<(std::time::SystemTime, PathBuf)> = dir
@@ -292,13 +314,9 @@ fn sockets(name: Option<&str>) -> Vec<PathBuf> {
     socks.into_iter().map(|(_, path)| path).collect()
 }
 
-/// Connect to the newest live timer (named `name`, if given). Sockets left
-/// behind by timers that died are removed on the way.
-pub fn connect(name: Option<&str>) -> Option<UnixStream> {
-    connect_path(name).map(|(s, _)| s)
-}
-
-/// `connect`, also returning the socket's path (which names the timer).
+/// Connect to the newest live timer (named `name`, if given), returning the
+/// socket's path too (which names the timer). Sockets left behind by timers
+/// that died are removed on the way.
 fn connect_path(name: Option<&str>) -> Option<(UnixStream, PathBuf)> {
     for path in sockets(name) {
         match UnixStream::connect(&path) {
@@ -334,8 +352,8 @@ pub fn request(stream: &mut UnixStream, line: &str) -> io::Result<String> {
 pub fn status(name: Option<&str>, follow: bool) -> io::Result<()> {
     let mut out = io::stdout().lock();
     if !follow {
-        let line = match connect(name) {
-            Some(mut s) => request(&mut s, "status")?,
+        let line = match connect_path(name) {
+            Some((mut s, _)) => request(&mut s, "status")?,
             None => IDLE_JSON.to_string(),
         };
         return writeln!(out, "{line}");
@@ -604,14 +622,32 @@ pub fn ctl(name: Option<&str>, command: &crate::cli::CtlCommand) -> Result<(), S
 
 /// The reply to `state` and `handover`: `state` (see `App::handover_state`), then this
 /// process's command line, each argument hex-encoded (so tabs, newlines and
-/// non-UTF-8 bytes survive), all tab-separated. `--headless` is left out:
-/// the point is to get a window.
-pub fn handover_reply(state: &str) -> String {
+/// non-UTF-8 bytes survive), all tab-separated. `args` are this process's
+/// arguments (without the program name). `--headless` is left out: the point
+/// is to get a window. So are `--view` and `--resume-state` from an earlier
+/// attach: the new process gets fresh ones, which these would override.
+pub fn handover_reply(state: &str, args: impl IntoIterator<Item = OsString>) -> String {
+    const WITH_VALUE: [&str; 2] = ["--view", "--resume-state"];
     let mut out = state.to_string();
     let mut options = true;
-    for arg in std::env::args_os().skip(1) {
-        if options && arg == "--headless" {
-            continue;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if options {
+            if arg == "--headless" {
+                continue;
+            }
+            if WITH_VALUE.iter().any(|o| arg == *o) {
+                args.next();
+                continue;
+            }
+            let joined = arg.to_str().is_some_and(|a| {
+                WITH_VALUE
+                    .iter()
+                    .any(|o| a.strip_prefix(o).is_some_and(|v| v.starts_with('=')))
+            });
+            if joined {
+                continue;
+            }
         }
         if arg == "--" {
             options = false;
@@ -673,22 +709,30 @@ fn attach(name: Option<&str>, take: bool) -> Result<(), String> {
     if !io::stdout().is_terminal() {
         return Err("`attach` shows the timer in this terminal; run it in one".into());
     }
-    let (mut s, path) = connect_path(name).ok_or_else(|| match name {
-        Some(n) => format!("no running timer called `{n}`"),
-        None => "no running timer".to_string(),
-    })?;
-    let (timer, _) = sock_name_and_pid(&path).ok_or("can't tell the timer's name")?;
-    let reply = request(&mut s, if take { "handover" } else { "state" }).map_err(|e| e.to_string())?;
-    if let Some(e) = reply.strip_prefix("error: ") {
-        if e.starts_with("unknown command") {
-            return Err(format!(
-                "`{timer}` runs an older t- that can't be attached; start it again"
-            ));
-        }
-        return Err(e.to_string());
-    }
-    let (state, args) = parse_handover(&reply).ok_or("garbled reply from the timer")?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    // The timer's command line, carrying on as `role`. Our arguments go ahead
+    // of the old ones, so a `--` among them can't swallow these.
+    let window = |extra: &[&str], role: &str, timer: &str, state: &str, args: &[OsString]| {
+        let mut c = std::process::Command::new(&exe);
+        c.arg0("t-")
+            .args(extra)
+            .args(["--no-headless", role, timer, "--resume-state", state])
+            .args(args);
+        c
+    };
+    let (timer, mut state, mut args) = ask_state(name, "state")?;
     if take {
+        // The timer quits once it has handed over, so first make sure its
+        // command line still starts here: the config may have changed since
+        // (a preset, a theme), or an `--until` date passed. As a viewer, since
+        // the timer still holds its name.
+        let checked = window(&["--check"], "--view", &timer, &state, &args)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !checked.success() {
+            return Err(format!("`{timer}` can't start here (see above); it keeps running"));
+        }
+        (_, state, args) = ask_state(Some(&timer), "handover")?;
         // The old process quits right after replying; its name must be free first.
         let deadline = Instant::now() + Duration::from_secs(3);
         while running_pid(&timer).is_some() {
@@ -698,15 +742,29 @@ fn attach(name: Option<&str>, take: bool) -> Result<(), String> {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let role = if take { "--name" } else { "--view" };
-    // Ahead of the old arguments, so a `--` among them can't swallow these.
-    let err = std::process::Command::new(exe)
-        .arg0("t-")
-        .args(["--no-headless", role, &timer, "--resume-state", &state])
-        .args(args)
-        .exec();
+    let err = window(&[], role, &timer, &state, &args).exec();
     Err(format!("can't start the timer's window: {err}"))
+}
+
+/// Ask a timer for `state` or `handover`: its name, state and command line.
+fn ask_state(name: Option<&str>, line: &str) -> Result<(String, String, Vec<OsString>), String> {
+    let (mut s, path) = connect_path(name).ok_or_else(|| match name {
+        Some(n) => format!("no running timer called `{n}`"),
+        None => "no running timer".to_string(),
+    })?;
+    let (timer, _) = sock_name_and_pid(&path).ok_or("can't tell the timer's name")?;
+    let reply = request(&mut s, line).map_err(|e| e.to_string())?;
+    if let Some(e) = reply.strip_prefix("error: ") {
+        if e.starts_with("unknown command") {
+            return Err(format!(
+                "`{timer}` runs an older t- that can't be attached; start it again"
+            ));
+        }
+        return Err(e.to_string());
+    }
+    let (state, args) = parse_handover(&reply).ok_or("garbled reply from the timer")?;
+    Ok((timer, state, args))
 }
 
 #[cfg(test)]
@@ -733,6 +791,43 @@ mod tests {
         assert_eq!(parse_handover("1 2 3 4 0 0\tzz"), None);
         assert_eq!(parse_handover("1 2 3 4 0 0\tabc"), None);
         assert_eq!(parse_handover(""), None);
+    }
+
+    #[test]
+    fn handover_leaves_out_what_the_new_process_replaces() {
+        let args = [
+            "--headless",
+            "--view",
+            "old",
+            "--resume-state",
+            "1 2",
+            "--resume-state=3 4",
+            "-n",
+            "tea",
+            "--",
+            "--view",
+        ];
+        let reply = handover_reply("S", args.iter().map(OsString::from));
+        let (_, back) = parse_handover(&reply).unwrap();
+        // After `--` nothing is an option any more.
+        assert_eq!(back, ["-n", "tea", "--", "--view"].map(OsString::from));
+    }
+
+    #[test]
+    fn socket_dir_must_be_our_own() {
+        let dir = std::env::temp_dir().join(format!("tminus-owner-{}", std::process::id()));
+        let link = dir.with_extension("link");
+        std::fs::create_dir_all(&dir).unwrap();
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&dir, &link).unwrap();
+        assert!(check_owner(&dir).is_ok());
+        assert!(check_owner(&link).is_err(), "a symlink, maybe someone else's");
+        // SAFETY: getuid has no preconditions and cannot fail.
+        if unsafe { libc::getuid() } != 0 {
+            assert!(check_owner(Path::new("/")).is_err(), "root's");
+        }
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_dir(&dir);
     }
 
     #[test]
@@ -804,7 +899,7 @@ mod tests {
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
         let mut server = Server::start("unit test").unwrap();
         let client = std::thread::spawn(|| {
-            let mut s = connect(Some("unit test")).expect("socket found");
+            let (mut s, _) = connect_path(Some("unit test")).expect("socket found");
             request(&mut s, "toggle").unwrap()
         });
         let mut reqs = vec![];

@@ -534,7 +534,20 @@ fn theme_candidates() -> Vec<clap_complete::CompletionCandidate> {
         .collect()
 }
 
+/// The longest duration accepted: 100 years. Far beyond any real timer, and
+/// far enough from `Duration::MAX` that adding time (`t- ctl add`) or summing
+/// a long sequence (`--bar-total`) can't overflow.
+const MAX_DURATION: Duration = Duration::from_secs(100 * 365 * 86_400);
+
 pub fn parse_duration(s: &str) -> Result<Duration, String> {
+    let d = parse_span(s)?;
+    if d > MAX_DURATION {
+        return Err(format!("duration {:?} is too long (at most 100 years)", s.trim()));
+    }
+    Ok(d)
+}
+
+fn parse_span(s: &str) -> Result<Duration, String> {
     let s = s.trim();
     let bad = || format!("can't understand duration {s:?} (try 90, 5m, 1h30m or 10:00)");
     let secs_f64 = |n: f64| Duration::try_from_secs_f64(n).map_err(|_| bad());
@@ -610,8 +623,6 @@ pub fn format_clock(secs: u64, hours: Option<usize>) -> String {
     }
 }
 
-/// Without seconds, for long countdowns: `1h 05m`, `2d 03h 04m`. Minutes are
-/// rounded up, like the full clock rounds up seconds.
 /// A segment length in words, short and exact: `5m`, `1h 30m`, `2m 30s`, `45s`.
 pub fn format_span(secs: u64) -> String {
     let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
@@ -627,6 +638,8 @@ pub fn format_span(secs: u64) -> String {
     }
 }
 
+/// Without seconds, for long countdowns: `1h 05m`, `2d 03h 04m`. Minutes are
+/// rounded up, like the full clock rounds up seconds.
 pub fn format_coarse(secs: u64) -> String {
     let mins = secs.div_ceil(60);
     let (d, h, m) = (mins / 1440, mins / 60 % 24, mins % 60);
@@ -715,6 +728,9 @@ mod tests {
             "NaN",
             "inf",
             "18446744073709551615:59",
+            // Fits a Duration, but adding to it would overflow.
+            "1e19",
+            "40000d",
         ] {
             assert!(parse_duration(s).is_err(), "{s} should be rejected");
         }

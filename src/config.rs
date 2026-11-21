@@ -22,6 +22,8 @@ use crate::theme::{self, Theme};
 /// Options that only make sense for a single run, so not in the config.
 const NOT_CONFIGURABLE: &[&str] = &[
     "until",
+    "check",
+    "demo",
     "config",
     "no-config",
     "list-effects",
@@ -129,7 +131,9 @@ fn to_args(table: &toml::Table, cmd: &Command) -> Result<Vec<OsString>, String> 
                 toml::Value::Array(items) => items.iter().map(scalar).collect::<Result<Vec<_>, _>>()?.join(","),
                 _ => return Err(format!("`{key}` needs a value, like {key} = \"...\"")),
             };
-            args.extend([flag.into(), val.into()]);
+            // One `--key=value` argument, so a value starting with `-`
+            // (`done_text = "-- done --"`) isn't taken for an option.
+            args.push(format!("{flag}={val}").into());
         } else {
             match value {
                 toml::Value::Boolean(true) => args.push(flag.into()),
@@ -176,15 +180,27 @@ mod tests {
         .join(" ");
         // Table order isn't file order, so check each mapping separately.
         for part in [
-            "--theme nord",
+            "--theme=nord",
             "--bar",
-            "--effect matrix,burn",
-            "--decimals 2",
-            "--every 7.5",
+            "--effect=matrix,burn",
+            "--decimals=2",
+            "--every=7.5",
         ] {
             assert!(a.contains(part), "{part:?} missing from {a:?}");
         }
         assert!(!a.contains("no-bell"), "false switches add nothing: {a:?}");
+    }
+
+    #[test]
+    fn values_may_start_with_a_dash() {
+        use clap::Parser;
+        let from_config = args("done_text = \"-- done --\"").unwrap();
+        let argv = ["t-".to_string()]
+            .into_iter()
+            .chain(from_config)
+            .chain(["5m".to_string()]);
+        let cli = crate::cli::Cli::try_parse_from(argv).unwrap();
+        assert_eq!(cli.done_text.as_deref(), Some("-- done --"));
     }
 
     #[test]
@@ -197,7 +213,7 @@ mod tests {
         let mut names: Vec<_> = c.themes.iter().map(|t| t.name.as_str()).collect();
         names.sort_unstable();
         assert_eq!(names, ["calm", "sunset"]);
-        assert_eq!(c.args, ["--theme", "sunset"]);
+        assert_eq!(c.args, ["--theme=sunset"]);
         let err = parse("[themes.bad]\ngradient = [\"nope\"]", &crate::cli::Cli::command()).unwrap_err();
         assert!(err.contains("theme `bad`"), "{err}");
     }
@@ -233,6 +249,9 @@ mod tests {
     fn rejects_bad_config() {
         assert!(args("colour = \"red\"").unwrap_err().contains("unknown key `colour`"));
         assert!(args("until = \"17:00\"").unwrap_err().contains("unknown key"));
+        // It would make every start only check, or only demo.
+        assert!(args("check = true").unwrap_err().contains("unknown key"));
+        assert!(args("demo = true").unwrap_err().contains("unknown key"));
         assert!(args("bar = \"yes\"").unwrap_err().contains("on/off"));
         assert!(args("theme = true").unwrap_err().contains("needs a value"));
         assert!(args("theme = ").is_err());
