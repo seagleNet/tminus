@@ -75,7 +75,7 @@ effects (highlight, colorshift, spotlights) are invisible in text snapshots.
 
 - **Released:** 0.1.0, 0.2.0, 0.3.0 (all 2026-11-12), 0.3.1 and 0.4.0 (2026-11-14), 0.5.0 (2026-11-21): public repo, tags with GitHub release
   binaries (`release.yml`), published on crates.io (`cargo install tminus`). The README GIFs
-  are still the 0.1.0 recordings (URLs pinned to `v0.1.0`).
+  were re-recorded with 0.5.0 (2026-11-21); crates.io shows them from the next publish on.
 - Next release: bump `version` in Cargo.toml, tag `vX.Y.Z` (the push runs `release.yml`),
   `cargo publish` from the tagged commit; bump the GIF URL tag in the README if re-recorded. `cargo publish`'s verify step builds the packaged copy into the shared `target/` and leaves `target/debug/t-` pointing at `target/package/` sources (edits then look "fresh"): run `cargo clean -p tminus` afterwards.
 - AUR: not submitted yet (registrations were closed). When it opens: `updpkgsums` +
@@ -83,5 +83,5 @@ effects (highlight, colorshift, spotlights) are invisible in text snapshots.
 - Never tested for real: Waybar itself (current Omarchy has omarchy-shell instead; `t- ctl status
   --follow` was checked through a pipe), the Hyprland binds in the README, running on macOS
   (CI only builds and tests it).
-- README GIFs: `vhs/render.sh` (tapes in `vhs/`, output `assets/`, needs vhs + gifsicle). Tapes use a fresh `HOME`, no Omarchy themes, and hidden aliases for flags; re-run after visible changes. The README links them by absolute URL pinned to a tag (`raw.githubusercontent.com/.../v0.1.0/assets/...`, so the crates.io page works); bump that tag when re-recording for a release.
+- README GIFs: `vhs/render.sh` (tapes in `vhs/`, output `assets/`, needs vhs + gifsicle). Tapes use a fresh `HOME`, no Omarchy themes, and hidden aliases for flags; re-run after visible changes. The README links them by absolute URL pinned to the full hash of the commit that added them (`raw.githubusercontent.com/.../<sha>/assets/...`, so the crates.io page works and GitHub shows them at once); after re-recording, commit the GIFs, then point the URLs at that commit. Never rewrite `master` history past it.
 - Ideas not done: CHANGELOG.
