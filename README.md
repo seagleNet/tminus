@@ -207,7 +207,7 @@ at zero. `q` quits and prints your choice (`--theme nord --effect rain`) to
 paste into a command or the config. Other options apply as usual, so `t- --demo
 1:30:00 -f block -t focus` previews exactly that look.
 
-![t- --demo switching between themes and effects with the arrow keys](https://raw.githubusercontent.com/seagleNet/tminus/v0.1.0/assets/demo.gif)
+![t- --demo stepping through effects with the arrow keys](https://raw.githubusercontent.com/seagleNet/tminus/v0.1.0/assets/demo.gif)
 
 ## Configuration
 
