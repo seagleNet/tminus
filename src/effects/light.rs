@@ -7,34 +7,13 @@
 
 use rand::{Rng, RngExt, seq::SliceRandom};
 
-use super::{Effect, max, reveal};
+use super::{Effect, WHITE, hexes, max, palette, reveal};
 use crate::{
     scene::Scene,
     term::Frame,
-    theme::Rgb,
+    theme::{Rgb, cycle},
     util::{ease_in_out_sine, ease_out_cubic, hash, hash01, line},
 };
-
-const WHITE: Rgb = Rgb(255, 255, 255);
-
-fn hexes(list: &[&str]) -> Vec<Rgb> {
-    list.iter().map(|h| Rgb::hex(h)).collect()
-}
-
-/// Sample a color list as a loop.
-fn cycle(colors: &[Rgb], u: f32) -> Rgb {
-    let n = colors.len();
-    let x = u.rem_euclid(1.0) * n as f32;
-    let i = x as usize % n;
-    colors[i].lerp(colors[(i + 1) % n], x.fract())
-}
-
-/// Sample a color list from first to last.
-fn palette(colors: &[Rgb], u: f32) -> Rgb {
-    let x = u.clamp(0.0, 1.0) * (colors.len() - 1) as f32;
-    let i = (x as usize).min(colors.len() - 1);
-    colors[i].lerp(colors[(i + 1).min(colors.len() - 1)], x.fract())
-}
 
 /// Distance of cell `i` from the canvas center, 0..1, with columns counted
 /// half (cells are about twice as tall as wide).
@@ -56,9 +35,11 @@ impl Effect for ColorShift {
     fn draw(&mut self, sc: &Scene, t: f32, f: &mut Frame) -> bool {
         const SHIFT: f32 = 2.4;
         const SETTLE: f32 = 0.6;
-        let rainbow = hexes(&[
-            "#e81416", "#ffa500", "#faeb36", "#79c314", "#487de7", "#4b369d", "#70369d",
-        ]);
+        let rainbow = const {
+            hexes([
+                "#e81416", "#ffa500", "#faeb36", "#79c314", "#487de7", "#4b369d", "#70369d",
+            ])
+        };
         for i in 0..sc.len() {
             let Some(cell) = sc.settled(i) else { continue };
             let wave = cycle(&rainbow, radial(sc, i) - t * 0.9);
@@ -144,7 +125,7 @@ impl Effect for Sweep {
         const SECOND: f32 = 0.9;
         const BAND: [char; 4] = ['█', '▓', '▒', '░'];
         let tw = sc.tw() as f32;
-        let gray = Rgb::hex("#808080");
+        let gray = const { Rgb::hex("#808080") };
         let travel = |p: f32| -4.0 + (tw + 8.0) * ease_in_out_sine(p);
         let first = tw - travel(t / PASS); // right to left
         let second = travel((t - SECOND) / PASS); // left to right
@@ -201,7 +182,7 @@ pub fn smoke(sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
 impl Effect for Smoke {
     fn draw(&mut self, sc: &Scene, t: f32, f: &mut Frame) -> bool {
         const PUFFS: [char; 5] = ['░', '▒', '▓', '▒', '░'];
-        let (start, dark) = (Rgb::hex("#7A7A7A"), Rgb::hex("#242424"));
+        let (start, dark) = (const { Rgb::hex("#7A7A7A") }, const { Rgb::hex("#242424") });
         for (i, &arrive) in self.arrive.iter().enumerate() {
             let (x, y) = sc.pos(i);
             let lt = t - arrive;
@@ -320,9 +301,9 @@ pub fn laseretch(sc: &Scene, _rng: &mut impl Rng) -> Box<dyn Effect> {
 
 impl Effect for LaserEtch {
     fn draw(&mut self, sc: &Scene, t: f32, f: &mut Frame) -> bool {
-        let cool = hexes(&["#ffe680", "#ff7b00"]);
-        let laser = hexes(&["#ffffff", "#376cff"]);
-        let sparks = hexes(&["#ffffff", "#ffe680", "#ff7b00", "#1a0900"]);
+        let cool = const { hexes(["#ffe680", "#ff7b00"]) };
+        let laser = const { hexes(["#ffffff", "#376cff"]) };
+        let sparks = const { hexes(["#ffffff", "#ffe680", "#ff7b00", "#1a0900"]) };
         for (i, &etch_at) in self.etch_at.iter().enumerate() {
             let Some(cell) = sc.settled(i) else { continue };
             let age = t - etch_at;
@@ -396,7 +377,7 @@ pub fn overflow(sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
 
 impl Effect for Overflow {
     fn draw(&mut self, sc: &Scene, t: f32, f: &mut Frame) -> bool {
-        let colors = hexes(&["#f2ebc0", "#8dbfb3", "#f2ebc0"]);
+        let colors = const { hexes(["#f2ebc0", "#8dbfb3", "#f2ebc0"]) };
         let (tw, th) = (sc.tw(), sc.th());
         let total = self.lines.len() - th;
         let offset = (ease_out_cubic(t / SCROLL) * total as f32).round() as usize;
@@ -456,8 +437,8 @@ pub fn synthgrid(sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
 impl Effect for SynthGrid {
     fn draw(&mut self, sc: &Scene, t: f32, f: &mut Frame) -> bool {
         const SHADES: [char; 3] = ['░', '▒', '▓'];
-        let grid = hexes(&["#CC00CC", "#ffffff"]);
-        let text = hexes(&["#8A008A", "#00D1FF", "#FFFFFF"]);
+        let grid = const { hexes(["#CC00CC", "#ffffff"]) };
+        let text = const { hexes(["#8A008A", "#00D1FF", "#FFFFFF"]) };
         let (tw, th) = (sc.tw(), sc.th());
         let per_row = tw.div_ceil(self.block_w);
         // The text, block by block.
@@ -558,10 +539,10 @@ pub fn thunderstorm(sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
 
 impl Effect for Thunderstorm {
     fn draw(&mut self, sc: &Scene, t: f32, f: &mut Frame) -> bool {
-        let bolt = Rgb::hex("#68A3E8");
-        let glow = Rgb::hex("#EF5411");
-        let spark = Rgb::hex("#ff4d00");
-        let rain = Rgb::hex("#5d7a99");
+        let bolt = const { Rgb::hex("#68A3E8") };
+        let glow = const { Rgb::hex("#EF5411") };
+        let spark = const { Rgb::hex("#ff4d00") };
+        let rain = const { Rgb::hex("#5d7a99") };
         // How strongly the text glows after the latest strike.
         let since = self
             .strikes
@@ -643,8 +624,8 @@ impl Effect for VhsTape {
     fn draw(&mut self, sc: &Scene, t: f32, f: &mut Frame) -> bool {
         const GLITCH: f32 = 2.2;
         const REDRAW: f32 = 0.6;
-        let colors = hexes(&["#ffffff", "#ff0000", "#00ff00", "#0000ff", "#ffffff"]);
-        let noise = hexes(&["#1e1e1f", "#3c3b3d", "#6d6c70", "#a2a1a6", "#cbc9cf"]);
+        let colors = const { hexes(["#ffffff", "#ff0000", "#00ff00", "#0000ff", "#ffffff"]) };
+        let noise = const { hexes(["#1e1e1f", "#3c3b3d", "#6d6c70", "#a2a1a6", "#cbc9cf"]) };
         let (tw, th) = (sc.tw(), sc.th());
         let slot = (t / 0.08) as u64;
         // A wave of distortion rolling down once.
