@@ -659,7 +659,8 @@ impl Field {
                 }
                 dist.push(d);
                 shade.push(Shade {
-                    core: d.map(|d| cover(d, STROKE, 1.0 / s)),
+                    // At least a pixel wide, or small tubes' wires come out dim and uneven.
+                    core: d.map(|d| cover(d, STROKE.max(1.0 / s), 1.0 / s)),
                     unlit: d.map(|d| cover(d, STROKE * 0.6, 1.0 / s)),
                     halo: d.map(|d| (-d / GLOW_R).exp()),
                     near: d.map(|d| (-d / 0.35).exp()),
@@ -1791,6 +1792,20 @@ mod tests {
                 full as f32 > 1.5 * f.s,
                 "tube {tube_w}: only {full} pixels on the 4's wires"
             );
+        }
+    }
+
+    #[test]
+    fn small_tubes_keep_bright_wires() {
+        // A sub-pixel wire spreads over half-lit pixels (down to 0.58 at 8
+        // cells); a curve between pixel centers still loses a little.
+        for tube_w in MIN_TUBE_W..40 {
+            let f = Field::new(tube_w, tube_rows(tube_w), false, 1);
+            let cath = f.cathodes(Group::Digits);
+            for k in 0..10 {
+                let peak = cath.shade.iter().map(|s| s.core[k]).fold(0.0, f32::max);
+                assert!(peak > 0.85, "tube {tube_w}: digit {k} peaks at {peak}");
+            }
         }
     }
 
