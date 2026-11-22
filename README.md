@@ -9,27 +9,22 @@ that replay every so often.
 ## Features
 
 - **All 37 effects of Omarchy's screensaver**, adapted from
-  [TerminalTextEffects](https://github.com/ChrisBuilds/terminaltexteffects):
-  beams, binarypath, blackhole, bouncyballs, bubbles, burn, colorshift, crumble,
-  decrypt, errorcorrect, expand, fireworks, highlight, laseretch, matrix,
-  middleout, orbittingvolley, overflow, pour, print, rain, randomsequence,
-  rings, scattered, slice, slide, smoke, spotlights, spray, swarm, sweep,
-  synthgrid, thunderstorm, unstable, vhstape, waves and wipe — shortened to at
-  most a few seconds each so the clock stays readable. `matrix-heavy` is a
-  denser full-screen matrix you can pick with `--effect`.
-  Digits also scramble briefly as they tick.
-- **Themes**: on Omarchy, every installed theme with its real colors (read
-  from its files, so custom themes work too), defaulting to the active one;
-  built-in versions of the stock themes elsewhere; and your own.
-- **Final-seconds alert**: the background (or nixie tubes) pulses with each tick, and big effects
-  pause so the seconds stay readable. Effects only start if they'll finish
-  before then, so short timers get short effects (a 10-second one gets none).
+  [TerminalTextEffects](https://github.com/ChrisBuilds/terminaltexteffects) and
+  shortened to a few seconds each so the clock stays readable
+  (`t- --list-effects`; `matrix-heavy` is an extra-dense matrix). Digits also
+  scramble briefly as they tick.
+- **Themes**: on Omarchy, every installed theme with its real colors (custom
+  ones too), defaulting to the active one; built-in versions of the stock themes
+  elsewhere; and your own.
+- **Final-seconds alert**: the background (or nixie tubes) pulses with each
+  tick. Effects only start if they'll finish before then, so short timers get
+  short effects (a 10-second one gets none).
 - **Accurate**: duration timers keep counting through suspend (Linux and
-  macOS), and `--until` follows the wall clock, so it handles NTP corrections
-  and DST. Count down to a time, a weekday or a date days away.
+  macOS); `--until` follows the wall clock (NTP corrections, DST) and takes a
+  time, a weekday or a date days away.
 - **Sequences** like `25m:work 5m:break x4`, a built-in `@pomodoro`, and your
   own presets.
-- **Remote control, Omarchy bar and Waybar**: watch and steer a timer from your bar or
+- **Remote control**: watch and steer a timer from the Omarchy bar, Waybar or
   keybindings, or run it with no window at all.
 - **Nixie tubes** (`--font nixie`): neon wire digits in glass tubes, with glow,
   unlit cathodes and their own slot-machine effect (see [Nixie tubes](#nixie-tubes)).
@@ -51,11 +46,9 @@ The command is called **`t-`** (as in T-minus).
   cargo install --path .
   ```
 
-Shell completions and the man page come from the binary itself. Completions
-ask `t-` on each Tab, so they know your themes (built-in, Omarchy and config),
-presets (`t- @<Tab>`, and `25m@<Tab>` for a segment's theme) and running timers
-(`t- ctl pause -n <Tab>`).
-Hook them up in your shell's startup file:
+Completions and the man page come from the binary itself. Completions ask `t-`
+on each Tab, so they know your themes, presets (`t- @<Tab>`, `25m@<Tab>`) and
+running timers (`t- ctl pause -n <Tab>`). Add them to your shell's startup file:
 
 ```sh
 COMPLETE=fish t- | source            # fish: ~/.config/fish/completions/t-.fish
@@ -100,28 +93,45 @@ t- 25m --exit && notify-send "break time"
 | `h` / `?` | show / hide the keys popup |
 | `q` / `esc` | quit |
 
+`t- --help` lists every option. **Exit codes:** `0` the countdown finished, `1`
+you quit early, `2` bad arguments.
+
+## Trying looks
+
+![t- --demo stepping through effects with the arrow keys](https://raw.githubusercontent.com/seagleNet/tminus/072dcd5e3dc982e75d0f8774e6cb03264ef36862/assets/demo.gif)
+
+`t- --demo` shows a live clock with one effect on repeat:
+
+- `←`/`→` switch the theme, `↑`/`↓` the effect
+- `a` moves on to the next effect after each one, `r` picks a random one
+- `f` previews the final seconds and the flash at zero
+- `q` quits and prints your choice (`--theme nord --effect rain`), ready for a
+  command or the config
+
+Other options apply as usual, so `t- --demo 1:30:00 -f block -t focus` previews
+exactly that look. `--list-themes` and `--list-effects` print what's available.
+
 ## Nixie tubes
 
 ![The nixie tube font: tubes run through their digits (slotmachine), tick over with a crossfade, and glow green as the decrypt effect plays over them](https://raw.githubusercontent.com/seagleNet/tminus/e32fde3a7fce6b117e1ecd52db9a867950a2a17f/assets/nixie.gif)
 
-`--font nixie` draws the clock as nixie tubes: thin neon wire digits after the
-IN-8-2, as true-color half-block pixels (small tubes as crisp octant wires
-without glass, in terminals that draw them, `--small-tubes`), with glass,
-unlit cathodes behind the lit one, glow, and a crossfade as digits change.
-Letters for `--done-text` (wrapped onto several lines if long), titles and
-`2d`/`1h 05m` go in symbol tubes inspired by the IN-15.
+`--font nixie` draws the clock as nixie tubes after the IN-8-2: thin neon wires
+in glass, unlit cathodes behind the lit one, glow, and a crossfade as digits
+change. Letters (`--done-text`, titles, `2d`/`1h 05m`) go in symbol tubes
+inspired by the IN-15; a long `--done-text` wraps onto several lines.
 
-Each part can be switched off (`--no-glass`, `--unlit 0`, `--glow 0`,
-`--separator none`, `--no-effect-glow` for effects lighting the glass);
-`--separator dot`, `--blink`, `--glass-tip`, `--flicker`, `--brightness`,
-`--nixie-color theme` (or `theme-solid`, one color; `theme-heavy`, drifting)
-and `--background dark` change the look.
+| To | Use |
+|---|---|
+| switch parts off | `--no-glass`, `--unlit 0`, `--glow 0`, `--separator none`, `--no-effect-glow` (effects lighting the glass) |
+| change the look | `--separator dot`, `--blink`, `--glass-tip`, `--flicker`, `--brightness`, `--background dark` |
+| change the color | `--nixie-color theme` (the theme's colors), `theme-solid` (one color), `theme-heavy` (drifting) |
+| draw small tubes | `--small-tubes`: crisp octant wires without glass, in terminals that draw them |
 
-The `slotmachine` effect runs every tube through all ten digits, like a nixie
-clock keeping its cathodes healthy; it's the only effect with nixie tubes
-unless you pick others with `--effect`. The others work and light the glass,
-but were made for the text fonts: some (`matrix`, effects that fill the screen
-with symbols) look out of place over the tubes.
+The `slotmachine` effect runs every tube through all ten digits, like a real
+nixie clock keeping its cathodes healthy. It's the only effect with nixie tubes
+unless you pick others with `--effect`: they work and light the glass, but were
+made for the text fonts, and some (`matrix`, effects that fill the screen with
+symbols) look out of place over the tubes.
 
 ## Sequences
 
@@ -137,11 +147,12 @@ t- @pomodoro                               # built in: 4×25m work with 5m break
 t- @focus                                  # your own preset (see Configuration)
 ```
 
-The status line shows progress and what comes next (`● ◐ ○ ○ · next: break 5m`,
-the name in that segment's theme color; `t- ctl status` has it in the tooltip);
-`n`/`b` skip forward/back, and `--bar-total` makes the progress bar cover the
-whole sequence. Each segment change rings the bell, flashes, and (with
-`--notify`) sends a notification.
+- The status line shows progress and what comes next (`● ◐ ○ ○ · next: break 5m`,
+  the name in that segment's theme color); `t- ctl status` has it in the tooltip.
+- `n`/`b` skip forward/back; `--bar-total` makes the progress bar cover the
+  whole sequence.
+- Each segment change rings the bell, flashes, and (with `--notify`) sends a
+  notification.
 
 ## At zero
 
@@ -168,17 +179,18 @@ t- ctl pause --all        # every running timer (also: resume --all, stop --all)
 t- ctl attach             # show a timer here, with its clock and effects
 ```
 
-On Omarchy, add the bar widget
-([omarchy-tminus](https://github.com/seagleNet/omarchy-tminus)): it shows the
-newest timer in the bar (left click pauses, scrolling adds or takes time), and
-its popup lists every running timer with its controls, opens any of them in a
+### Omarchy bar
+
+The [omarchy-tminus](https://github.com/seagleNet/omarchy-tminus) widget shows
+the newest timer in the bar: left click pauses, scrolling adds or takes time.
+Its popup lists every running timer with its controls, opens any of them in a
 terminal (`t- ctl attach`) and starts new ones.
 
 ```sh
 omarchy plugin add https://github.com/seagleNet/omarchy-tminus --enable
 ```
 
-Waybar module:
+### Waybar
 
 ```jsonc
 "custom/tminus": {
@@ -195,6 +207,8 @@ The JSON's `class` is `running`, `paused`, `alert` (final seconds), `waiting`
 (between segments with `--confirm`), `done`, or `idle` (no timer; the text is
 empty so Waybar hides the module), for styling in Waybar's CSS.
 
+### Without a window
+
 `--headless` runs a timer with no window at all, so it lives only in your bar;
 bind it to a key, e.g. in Hyprland:
 
@@ -203,37 +217,28 @@ bind = SUPER, T, exec, t- 25m:work 5m:break x4 --headless --notify
 bind = SUPER SHIFT, T, exec, t- ctl toggle
 ```
 
-Run without any terminal like this, tminus also shows its errors (a name
-that's taken, a mistyped option, no running timer) as desktop notifications.
+- Run without any terminal like this, tminus shows its errors (a name that's
+  taken, a mistyped option, no running timer) as desktop notifications.
+- `t- ctl attach` shows a running timer in the terminal you run it in, with its
+  big clock and effects: space, `n`, `+`, `-` and so on control the timer, and
+  `q` closes only this view.
+- `t- ctl attach --take` moves a headless timer into the terminal instead: it
+  carries on there under the same name, and `q` ends it.
 
-`t- ctl attach` shows a running timer in the terminal you run it in, with its
-big clock and effects: space, `n`, `+`, `-` and so on control the timer, and
-`q` closes only this view, leaving the timer running in the bar.
-`t- ctl attach --take` moves a headless timer into the terminal instead: it
-carries on there under the same name, and `q` ends it.
+### Timer names
 
-Every timer has a unique name: the one you give with `-n`/`--name` (a name
-that's already in use is refused), else the preset's (`t- @pomodoro` →
-`pomodoro`, then `eager-pomodoro`, …), else the title given with `-t`
-(`-t "Tea break"` → `tea-break`), else the config's `name` (the same way), else
-a random one like `steady-comet`. Headless timers print theirs when they
-start, `t- ctl list` shows them all, and the status tooltip ends with it.
-Pass `-n NAME` to `t- ctl` to pick one; without it, `t- ctl` acts on the newest
-timer (marked `*` in the list) and says which one it reached
-(`paused pomodoro (pid 4242)`). `t- ctl status --follow` without `-n` follows
-the newest timer, moving on when a newer one starts or the followed one quits.
+Every timer has a unique name, so `t- ctl -n NAME` can reach it:
 
-`t- --help` lists every option; `--list-themes` and `--list-effects` show
-what's available.
-
-To see them, run `t- --demo`: a live clock showing one effect on repeat. `←`/`→`
-switch the theme, `↑`/`↓` the effect, `a` moves on to the next effect after each
-one, `r` picks a random effect, and `f` previews the final seconds and the flash
-at zero. `q` quits and prints your choice (`--theme nord --effect rain`) to
-paste into a command or the config. Other options apply as usual, so `t- --demo
-1:30:00 -f block -t focus` previews exactly that look.
-
-![t- --demo stepping through effects with the arrow keys](https://raw.githubusercontent.com/seagleNet/tminus/072dcd5e3dc982e75d0f8774e6cb03264ef36862/assets/demo.gif)
+- The one you give with `-n`/`--name` (a name that's already in use is
+  refused), else the preset's (`t- @pomodoro` → `pomodoro`, then
+  `eager-pomodoro`, …), else the `-t` title's (`-t "Tea break"` → `tea-break`),
+  else the config's `name`, else a random one like `steady-comet`.
+- Headless timers print theirs when they start, `t- ctl list` shows them all,
+  and the status tooltip ends with it.
+- Without `-n`, `t- ctl` acts on the newest timer (marked `*` in the list) and
+  says which one it reached (`paused pomodoro (pid 4242)`); `t- ctl status
+  --follow` follows the newest, moving on when a newer one starts or the
+  followed one quits.
 
 ## Configuration
 
@@ -286,12 +291,10 @@ base = "nord"       # start from a built-in theme and change only some colors
 alert = "#ffab40"
 ```
 
-Missing colors are derived from the gradient (or taken from `base`). A custom
-theme with a built-in's name replaces it, and one named after an Omarchy theme
-takes precedence over the colors read from that theme's files. Custom themes show up
-in `--list-themes` and when cycling with `t`.
-
-**Exit codes:** `0` the countdown finished, `1` you quit early, `2` bad arguments.
+- Missing colors are derived from the gradient (or taken from `base`).
+- A custom theme with a built-in's name replaces it, and one named after an
+  Omarchy theme takes precedence over the colors read from that theme's files.
+- Custom themes show up in `--list-themes` and when cycling with `t`.
 
 ## Credits
 
