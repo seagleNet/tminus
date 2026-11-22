@@ -310,7 +310,7 @@ impl<'a> App<'a> {
         self.timer = Timer::new(self.plan[self.seg].dur);
         self.finished_at = None;
         self.theme = self.plan[self.seg].theme.unwrap_or(self.base_theme);
-        self.effect = None;
+        end_effect(&mut self.effect, &mut self.fx_end, now);
         self.pending = None;
         self.next_mark = None;
         self.next_effect_at = now;
@@ -853,6 +853,8 @@ impl<'a> App<'a> {
             // A done-text may wrap; the clock never does.
             self.completed() && cli.done_text.is_some(),
         );
+        // A clock that fell back from tubes gets the usual gap, or it may not fit.
+        let gap = if glyphs.nixie.is_some() { gap } else { 1 };
         let (glyphs, title_row) = match &title {
             Some(t) => font::stack(&glyphs, gap, t),
             None => (glyphs, usize::MAX),
@@ -1325,8 +1327,6 @@ impl<'a> App<'a> {
         i32::from(self.cli.bar) * 2 + status
     }
 
-    /// The title in the 3-row block font when large (and it has only
-    /// characters the font knows and fits), else as a line of text.
     /// The nixie options.
     fn nixie_style(&self) -> nixie::Style {
         let cli = self.cli;
@@ -1344,6 +1344,9 @@ impl<'a> App<'a> {
         }
     }
 
+    /// The title when large in nixie tubes (with that font, if they fit),
+    /// else in the 3-row block font (if it has only characters the font
+    /// knows and fits); otherwise as a line of text.
     fn title_glyphs(&self, title: &str) -> font::Glyphs {
         let max_w = (self.frame.w - 4).max(0) as usize;
         if self.title_large
@@ -1525,6 +1528,29 @@ mod tests {
             app.on_key(KeyCode::Char('q'), none, 0.0),
             "q quits once the popup is closed"
         );
+    }
+
+    #[test]
+    fn a_clock_too_small_for_tubes_keeps_room_beside_the_title() {
+        let cli = Cli::try_parse_from(["t-", "1m", "--font", "nixie", "-t", "focus"]).unwrap();
+        let themes = crate::theme::builtin();
+        // No segment label, so the title is `-t`'s (too long for the block font).
+        let plan = vec![Step {
+            dur: Duration::from_secs(60),
+            label: None,
+            theme: None,
+        }];
+        let none = || vec![effects::Kind::Off];
+        let pools = Pools {
+            intro: none(),
+            replay: none(),
+            zero: none(),
+        };
+        let mut app = App::new(&cli, pools, &themes, 0, plan, Timer::new(Duration::from_secs(60)));
+        app.resize(14, 4);
+        app.draw(0.0, &mut rand::rng());
+        let shown = app.frame.chars();
+        assert!(shown.contains("focus") && shown.contains(':'), "{shown:?}");
     }
 
     #[test]
