@@ -1491,36 +1491,44 @@ fn settled_cells(sc: &Scene, cells: &[CellAt], f: &Frame) -> Vec<bool> {
 /// What an effect lights in the tubes: their settled cells drawn as at rest
 /// (`settled_cells`), and the glass lit by the rest of what it drew
 /// (`light`; not in octant tubes, which have no glow, or on a light
-/// background). Separators fade in with their dots (`separator`).
+/// background). Separators come up with their dots and the digits
+/// (`separator`).
 fn bloom(sc: &Scene, nx: &Layout, base: &Frame, rest: &Frame, f: &mut Frame) {
     let glowing = nx.style.effect_glow && nx.field.m == 1 && !is_light(sc.rest);
     let (seps, tubes): (Vec<_>, Vec<_>) = slot_cells(sc, nx).partition(|(slot, _)| slot.lamp == Lamp::Colon);
-    // How far the digits look from unlit to rest (in brightness).
-    let lum = |c: Option<Rgb>| {
-        let Rgb(r, g, b) = c.unwrap_or(sc.rest);
-        f32::from(r) + f32::from(g) + f32::from(b)
-    };
-    let (mut off, mut unlit) = (0.0, 0.0);
-    for (slot, cells) in tubes {
-        let settled = settled_cells(sc, &cells, f);
-        if glowing && let Some(p) = played(&cells, slot.w, base, f) {
-            light(sc, nx, slot, &cells, &p, f);
+    for (slot, cells) in &tubes {
+        let settled = settled_cells(sc, cells, f);
+        if glowing && let Some(p) = played(cells, slot.w, base, f) {
+            light(sc, nx, slot, cells, &p, f);
         }
-        for (&(_, (x, y)), &s) in cells.iter().zip(&settled) {
-            if s {
-                f.set(x, y, rest.get(x, y));
-            }
-            let pixels = halves(f.get(x, y)).into_iter().zip(halves(base.get(x, y)));
-            for ((now, was), at_rest) in pixels.zip(halves(rest.get(x, y))) {
-                off += (lum(now) - lum(at_rest)).abs();
-                unlit += (lum(was) - lum(at_rest)).abs();
-            }
+        for (&(_, (x, y)), _) in cells.iter().zip(&settled).filter(|(_, s)| **s) {
+            f.set(x, y, rest.get(x, y));
         }
     }
-    let digits = if unlit > 0.0 { 1.0 - off / unlit } else { 1.0 };
+    let digits = look(sc, tubes.iter().flat_map(|(_, cells)| cells), f, base, rest);
     for (_, cells) in seps {
         separator(sc, &cells, digits, base, rest, f);
     }
+}
+
+/// How far `cells` look in `f` from unlit (`base`) to `rest`, 0..1, by
+/// brightness.
+fn look<'a>(sc: &Scene, cells: impl Iterator<Item = &'a CellAt>, f: &Frame, base: &Frame, rest: &Frame) -> f32 {
+    let lum = |c: Option<Rgb>| lum(c.unwrap_or(sc.rest));
+    let (mut off, mut unlit) = (0.0, 0.0);
+    for &(_, (x, y)) in cells {
+        let pixels = halves(f.get(x, y)).into_iter().zip(halves(base.get(x, y)));
+        for ((now, was), at_rest) in pixels.zip(halves(rest.get(x, y))) {
+            off += (lum(now) - lum(at_rest)).abs();
+            unlit += (lum(was) - lum(at_rest)).abs();
+        }
+    }
+    if unlit > 0.0 { 1.0 - off / unlit } else { 1.0 }
+}
+
+/// The brightness of `c`: its channels added up (enough to compare).
+fn lum(Rgb(r, g, b): Rgb) -> f32 {
+    f32::from(r) + f32::from(g) + f32::from(b)
 }
 
 /// A separator under an effect (it has no glass to light): as lit as the
@@ -1530,7 +1538,6 @@ fn bloom(sc: &Scene, nx: &Layout, base: &Frame, rest: &Frame, f: &mut Frame) {
 /// never back down while the effect plays. Anything else the effect
 /// draws over it stays on top.
 fn separator(sc: &Scene, cells: &[CellAt], digits: f32, base: &Frame, rest: &Frame, f: &mut Frame) {
-    let lum = |c: Rgb| f32::from(c.0) + f32::from(c.1) + f32::from(c.2);
     let dot = |i: usize, c: Option<Cell>| sc.settled(i).zip(c).filter(|(want, c)| want.ch == c.ch);
     let (mut lit, mut dots) = (0.0, 0.0);
     for &(i, (x, y)) in cells {
@@ -2348,26 +2355,16 @@ mod tests {
         draw(&sc, nx, &mut base, false);
         // How an effect ends: the settled wires, the separators' dots included.
         under_effect(&sc, &mut lit, |f| sc.draw_cells(f, 0));
-        let lum = |c: Option<Rgb>| {
-            let Rgb(r, g, b) = c.unwrap_or(sc.rest);
-            f32::from(r) + f32::from(g) + f32::from(b)
-        };
         // As far as the digits look, no further (from unlit to rest; the
         // crossfade after the effect does the rest of both).
-        let look = |colon: bool| {
-            let (mut off, mut unlit) = (0.0, 0.0);
-            for (_, cells) in slot_cells(&sc, nx).filter(|(slot, _)| (slot.lamp == Lamp::Colon) == colon) {
-                for (_, (x, y)) in cells {
-                    let pixels = halves(lit.get(x, y)).into_iter().zip(halves(base.get(x, y)));
-                    for ((now, was), at_rest) in pixels.zip(halves(rest.get(x, y))) {
-                        off += (lum(now) - lum(at_rest)).abs();
-                        unlit += (lum(was) - lum(at_rest)).abs();
-                    }
-                }
-            }
-            1.0 - off / unlit
+        let part = |colon: bool| {
+            let cells: Vec<CellAt> = slot_cells(&sc, nx)
+                .filter(|(slot, _)| (slot.lamp == Lamp::Colon) == colon)
+                .flat_map(|(_, cells)| cells)
+                .collect();
+            look(&sc, cells.iter(), &lit, &base, &rest)
         };
-        let (seps, digits) = (look(true), look(false));
+        let (seps, digits) = (part(true), part(false));
         assert!(digits < 0.99, "digits already at rest ({digits})");
         assert!((seps - digits).abs() < 0.05, "separators {seps} digits {digits}");
     }
@@ -2399,7 +2396,7 @@ mod tests {
         // Off the wires (a grid of blocks in effects, smooth at rest; the
         // crossfade takes those over), the light on the glass matches.
         let wires = frame(&|f| sc.draw_cells(f, 0));
-        let lum = |c: Option<Rgb>| c.map_or(0.0, |Rgb(r, g, b)| f32::from(r) + f32::from(g) + f32::from(b));
+        let lum = |c: Option<Rgb>| c.map_or(0.0, lum);
         let off = |a: &Frame| -> f32 {
             let (mut sum, mut n) = (0.0, 0.0);
             for y in 0..36 {
@@ -2589,7 +2586,6 @@ mod tests {
             0.0,
             usize::MAX,
         );
-        let lum = |c: Rgb| u32::from(c.0) + u32::from(c.1) + u32::from(c.2);
         for (rest, light) in [(Rgb(12, 12, 12), false), (Rgb(250, 248, 240), true)] {
             let sc = Scene {
                 t: &target,
