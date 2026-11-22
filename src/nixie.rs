@@ -1337,18 +1337,7 @@ pub fn crossfade(sc: &Scene, from: &Frame, f: &mut Frame) {
         return;
     }
     let k = sc.rest_k;
-    // A pixel drawn on one side only stays empty (the terminal's own
-    // background, maybe transparent) until it shows.
-    let mix = |a: Option<Rgb>, b: Option<Rgb>| {
-        let c = a.unwrap_or(sc.rest).lerp(b.unwrap_or(sc.rest), k);
-        let shows = |c: Rgb| {
-            c.0.abs_diff(sc.rest.0)
-                .max(c.1.abs_diff(sc.rest.1))
-                .max(c.2.abs_diff(sc.rest.2))
-                > 2
-        };
-        ((a.is_some() && b.is_some()) || (a.or(b).is_some() && shows(c))).then_some(c)
-    };
+    let mix = |a, b| blend(a, b, k, sc.rest);
     let (w, h) = (f.w, f.h);
     for (x, y) in (0..h).flat_map(|y| (0..w).map(move |x| (x, y))) {
         let (was, now) = (from.get(x, y), f.get(x, y));
@@ -1501,30 +1490,61 @@ fn settled_cells(sc: &Scene, cells: &[CellAt], f: &Frame) -> Vec<bool> {
 
 /// What an effect lights in the tubes: their settled cells drawn as at rest
 /// (`settled_cells`), and the glass lit by the rest of what it drew
-/// (`light`). Not separators (no glass), octant tubes (no glow) or on a
-/// light background.
+/// (`light`; not in octant tubes, which have no glow, or on a light
+/// background). Separators fade in with their dots (`separator`).
 fn bloom(sc: &Scene, nx: &Layout, base: &Frame, rest: &Frame, f: &mut Frame) {
     let glowing = nx.style.effect_glow && nx.field.m == 1 && !is_light(sc.rest);
     for (slot, cells) in slot_cells(sc, nx) {
+        if slot.lamp == Lamp::Colon {
+            separator(sc, &cells, base, rest, f);
+            continue;
+        }
         let settled = settled_cells(sc, &cells, f);
-        let tube = matches!(slot.lamp, Lamp::Tube { .. } | Lamp::Blank);
-        if glowing
-            && tube
-            && let Some(p) = played(&cells, slot.w, base, f)
-        {
+        if glowing && let Some(p) = played(&cells, slot.w, base, f) {
             light(sc, nx, slot, &cells, &p, f);
         }
-        // A separator lights only itself: once its dots are in place, all of
-        // it shows as at rest, glow included (as the bloom does for digits).
-        let whole = !tube
-            && cells
-                .iter()
-                .zip(&settled)
-                .all(|(&(i, _), &s)| s || sc.settled(i).is_none());
-        for (&(_, (x, y)), _) in cells.iter().zip(&settled).filter(|(_, s)| **s || whole) {
+        for (&(_, (x, y)), _) in cells.iter().zip(&settled).filter(|(_, s)| **s) {
             f.set(x, y, rest.get(x, y));
         }
     }
+}
+
+/// A separator under an effect (it has no glass to light): as lit as the
+/// effect has drawn its dots, against them at rest, glow and bulb included,
+/// so it fades in with them and is at rest once they are. Anything else the
+/// effect draws over it stays on top.
+fn separator(sc: &Scene, cells: &[CellAt], base: &Frame, rest: &Frame, f: &mut Frame) {
+    let lum = |c: Rgb| f32::from(c.0) + f32::from(c.1) + f32::from(c.2);
+    let dot = |i: usize, c: Option<Cell>| sc.settled(i).zip(c).filter(|(want, c)| want.ch == c.ch);
+    let (mut lit, mut dots) = (0.0, 0.0);
+    for &(i, (x, y)) in cells {
+        if sc.settled(i).is_some() {
+            dots += 1.0;
+            if let Some((want, c)) = dot(i, f.get(x, y)) {
+                lit += (lum(c.fg) / lum(want.fg).max(1.0)).min(1.0);
+            }
+        }
+    }
+    let k = if dots > 0.0 { lit / dots } else { 0.0 };
+    for &(i, (x, y)) in cells {
+        let (drawn, was) = (f.get(x, y), base.get(x, y));
+        if drawn != was && dot(i, drawn).is_none() {
+            continue;
+        }
+        let ([a0, a1], [b0, b1]) = (halves(was), halves(rest.get(x, y)));
+        f.set(x, y, encode(blend(a0, b0, k, sc.rest), blend(a1, b1, k, sc.rest)));
+    }
+}
+
+/// Pixel `a` blended towards `b` by `k`. One drawn on one side only stays
+/// empty (the terminal's own background, maybe transparent) until it shows.
+fn blend(a: Option<Rgb>, b: Option<Rgb>, k: f32, rest: Rgb) -> Option<Rgb> {
+    if k >= 1.0 {
+        return b;
+    }
+    let c = a.unwrap_or(rest).lerp(b.unwrap_or(rest), k);
+    let shows = c.0.abs_diff(rest.0).max(c.1.abs_diff(rest.1)).max(c.2.abs_diff(rest.2)) > 2;
+    ((a.is_some() && b.is_some()) || (a.or(b).is_some() && shows)).then_some(c)
 }
 
 /// Light tube `slot` (its `cells`) with what an effect drew over it, like
@@ -2344,7 +2364,7 @@ mod tests {
             under_effect(&plain_sc, f, |f| plain_sc.draw_cells(f, 0));
         });
         assert!(off(&dark) < -10.0, "glass lit by {} without effect glow", off(&dark));
-        // Separators come back whole, glow and all, once their dots are in place.
+        // Separators are at rest, glow and all, once their dots are.
         for (slot, cells) in slot_cells(&sc, target.nixie.as_ref().unwrap()) {
             if slot.lamp == Lamp::Colon {
                 assert!(cells.iter().all(|&(_, (x, y))| lit.get(x, y) == rest.get(x, y)));
