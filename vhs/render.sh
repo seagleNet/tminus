@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release --quiet
-for tape in hero demo alert; do
+for tape in hero demo alert nixie; do
     vhs "vhs/$tape.tape"
     gifsicle -O3 --lossy=60 --colors 128 --batch "assets/$tape.gif"
 done
