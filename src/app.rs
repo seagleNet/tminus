@@ -835,14 +835,27 @@ impl<'a> App<'a> {
         let text = &key.0;
         // Fraction digits change too fast for the tick scramble.
         let fx_until = text.find('.').unwrap_or(usize::MAX);
-        let title = key.1.as_deref().map(|t| self.title_glyphs(t));
-        // Nixie tubes need more room to tell the title from the clock or done-text.
-        let gap = match &title {
-            Some(t) if cli.font == font::FontKind::Nixie => (t.h / 2).max(3),
-            _ => 1,
-        };
-        let title_h = title.as_ref().map_or(0, |g| (g.h + gap) as i32);
         let edges = self.edge_rows().0 + self.edge_rows().1;
+        // Nixie tubes need more room to tell the title from the clock or done-text.
+        let gap_under = |t: &font::Glyphs| {
+            if cli.font == font::FontKind::Nixie {
+                (t.h / 2).max(3)
+            } else {
+                1
+            }
+        };
+        // A large title that leaves no row for the clock goes small.
+        let rows = sh - self.footer_height() - edges;
+        let title = key.1.as_deref().map(|t| {
+            let g = self.title_glyphs(t);
+            if g.h > 1 && (g.h + gap_under(&g)) as i32 >= rows {
+                font::plain(t)
+            } else {
+                g
+            }
+        });
+        let gap = title.as_ref().map_or(1, gap_under);
+        let title_h = title.as_ref().map_or(0, |g| (g.h + gap) as i32);
         let glyphs = font::render(
             text,
             cli.font,
@@ -1531,26 +1544,32 @@ mod tests {
     }
 
     #[test]
-    fn a_clock_too_small_for_tubes_keeps_room_beside_the_title() {
-        let cli = Cli::try_parse_from(["t-", "1m", "--font", "nixie", "-t", "focus"]).unwrap();
+    fn a_tiny_terminal_still_shows_the_clock_beside_the_title() {
         let themes = crate::theme::builtin();
-        // No segment label, so the title is `-t`'s (too long for the block font).
-        let plan = vec![Step {
-            dur: Duration::from_secs(60),
-            label: None,
-            theme: None,
-        }];
-        let none = || vec![effects::Kind::Off];
-        let pools = Pools {
-            intro: none(),
-            replay: none(),
-            zero: none(),
-        };
-        let mut app = App::new(&cli, pools, &themes, 0, plan, Timer::new(Duration::from_secs(60)));
-        app.resize(14, 4);
-        app.draw(0.0, &mut rand::rng());
-        let shown = app.frame.chars();
-        assert!(shown.contains("focus") && shown.contains(':'), "{shown:?}");
+        // `focus` is too long for the block font: a plain title (with nixie, a
+        // clock too small for tubes); `s0` fits it, but leaves no row for the clock.
+        for (font, title) in [("nixie", "focus"), ("auto", "s0")] {
+            let cli = Cli::try_parse_from(["t-", "1m", "--font", font, "-t", title]).unwrap();
+            let plan = vec![Step {
+                dur: Duration::from_secs(60),
+                label: None,
+                theme: None,
+            }];
+            let none = || vec![effects::Kind::Off];
+            let pools = Pools {
+                intro: none(),
+                replay: none(),
+                zero: none(),
+            };
+            let mut app = App::new(&cli, pools, &themes, 0, plan, Timer::new(Duration::from_secs(60)));
+            app.resize(14, 4);
+            app.draw(0.0, &mut rand::rng());
+            let shown = app.frame.chars();
+            assert!(
+                shown.contains(title) && shown.contains(':'),
+                "{font} {title}: {shown:?}"
+            );
+        }
     }
 
     #[test]
