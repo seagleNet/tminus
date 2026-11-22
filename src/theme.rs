@@ -44,7 +44,8 @@ impl Rgb {
 
     pub fn lerp(self, other: Rgb, t: f32) -> Rgb {
         let t = t.clamp(0.0, 1.0);
-        let f = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
+        // Between `a` and `b`, so + 0.5 rounds (`f32::round` is a libm call, and this runs per pixel).
+        let f = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t + 0.5) as u8;
         Rgb(f(self.0, other.0), f(self.1, other.1), f(self.2, other.2))
     }
 

@@ -590,14 +590,15 @@ fn blur<const N: usize>(src: &[[f32; N]], w: usize, h: usize, sigma: f32) -> Vec
             }
         }
     }
+    // Down the columns a row at a time, skipping rows the first pass left dark.
+    let lit: Vec<bool> = row.chunks(w).map(|r| r.iter().flatten().any(|&c| c != 0.0)).collect();
     let mut out = vec![[0.0; N]; w * h];
-    for y in 0..h {
+    for (y, to) in out.chunks_mut(w).enumerate() {
         for &(i, kv) in &k {
-            let Some(from) = y.checked_add_signed(i).filter(|&y| y < h) else {
+            let Some(from) = y.checked_add_signed(i).filter(|&y| y < h && lit[y]) else {
                 continue;
             };
-            for x in 0..w {
-                let (to, v) = (&mut out[y * w + x], row[from * w + x]);
+            for (to, v) in to.iter_mut().zip(&row[from * w..(from + 1) * w]) {
                 for c in 0..N {
                     to[c] += kv * v[c];
                 }
@@ -1164,8 +1165,14 @@ fn mix(a: [f32; 3], b: Rgb, k: f32) -> [f32; 3] {
     ]
 }
 
+/// `v` rounded to a whole number in `0..=max`. Not `f32::round`: that's a
+/// libm call on baseline x86-64, and this runs per pixel and channel.
+fn round_in(v: f32, max: f32) -> usize {
+    (v.clamp(0.0, max) + 0.5) as usize
+}
+
 fn to_rgb(c: [f32; 3]) -> Rgb {
-    let ch = |v: f32| v.round().clamp(0.0, 255.0) as u8;
+    let ch = |v: f32| round_in(v, 255.0) as u8;
     Rgb(ch(c[0]), ch(c[1]), ch(c[2]))
 }
 
@@ -1226,7 +1233,7 @@ fn glow_onto(col: [f32; 3], c: Colors, g: f32) -> [f32; 3] {
 /// tables: `powf` for each pixel made `theme-heavy` half as slow again.
 fn to_linear(v: f32) -> f32 {
     static TABLE: LazyLock<[f32; 256]> = LazyLock::new(|| std::array::from_fn(|i| linear_exact(i as f32)));
-    TABLE[v.round().clamp(0.0, 255.0) as usize]
+    TABLE[round_in(v, 255.0)]
 }
 
 fn from_linear(v: f32) -> f32 {
@@ -1234,7 +1241,7 @@ fn from_linear(v: f32) -> f32 {
     static TABLE: LazyLock<Vec<f32>> =
         LazyLock::new(|| (0..=STEPS).map(|i| srgb_exact(i as f32 / STEPS as f32)).collect());
     // Brighter than white only clips (`to_rgb`).
-    TABLE[(v * STEPS as f32).round().clamp(0.0, STEPS as f32) as usize]
+    TABLE[round_in(v * STEPS as f32, STEPS as f32)]
 }
 
 fn linear_exact(v: f32) -> f32 {
@@ -2089,6 +2096,45 @@ impl Scene<'_> {
 mod tests {
     use super::*;
     use rand::SeedableRng;
+
+    /// `blur` (sparse rows, dark rows skipped) matches a plain 2D convolution.
+    #[test]
+    fn blur_matches_a_plain_convolution() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+        let (w, h, sigma) = (23, 17, 1.7);
+        // Sparse, with whole dark rows, as an effect lights a tube.
+        let src: Vec<[f32; 3]> = (0..w * h)
+            .map(|j| {
+                if (j / w) % 4 != 1 && rand::RngExt::random_bool(&mut rng, 0.2) {
+                    std::array::from_fn(|_| rand::RngExt::random::<f32>(&mut rng))
+                } else {
+                    [0.0; 3]
+                }
+            })
+            .collect();
+        let k: Vec<(isize, f32)> = kernel(sigma).collect();
+        let got = blur(&src, w, h, sigma);
+        for y in 0..h {
+            for x in 0..w {
+                let mut want = [0.0f32; 3];
+                for &(i, ki) in &k {
+                    for &(j, kj) in &k {
+                        let (Some(sx), Some(sy)) = (x.checked_add_signed(i), y.checked_add_signed(j)) else {
+                            continue;
+                        };
+                        if sx < w && sy < h {
+                            for c in 0..3 {
+                                want[c] += ki * kj * src[sy * w + sx][c];
+                            }
+                        }
+                    }
+                }
+                for c in 0..3 {
+                    assert!((got[y * w + x][c] - want[c]).abs() < 1e-5, "({x}, {y}) channel {c}");
+                }
+            }
+        }
+    }
 
     fn digit(k: u8, comma: bool) -> Lamp {
         Lamp::Tube {
