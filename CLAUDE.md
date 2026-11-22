@@ -14,6 +14,7 @@ cargo test
 cargo +1.88 test                                     # MSRV; keep in sync with rust-version and ci.yml
 cargo test measure_durations -- --ignored --nocapture  # worst-case effect durations
 cargo install --path .                               # installs ~/.cargo/bin/t-
+scripts/bench.py target/release/t-                   # output/CPU/wakeups per font+effect (see its docstring)
 ```
 
 CI (`.github/workflows/ci.yml`) runs fmt, clippy, tests on Linux + macOS and the
