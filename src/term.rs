@@ -4,7 +4,7 @@ use std::io::{self, BufWriter, Stdout, Write};
 
 use crossterm::{
     cursor, execute, queue,
-    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+    style::{Color, Print, ResetColor, SetBackgroundColor},
     terminal,
 };
 use unicode_width::UnicodeWidthChar;
@@ -19,7 +19,7 @@ pub const WIDE_TAIL: char = '\0';
 /// slow gradient drift doesn't rewrite every cell on every frame.
 const COLOR_TOLERANCE: u8 = 3;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cell {
     pub ch: char,
     pub fg: Rgb,
@@ -186,6 +186,8 @@ pub struct Term {
     bce: bool,
     /// What the last `present` wrote.
     pub presented: Presented,
+    /// A frame's output, reused.
+    buf: Vec<u8>,
 }
 
 impl Term {
@@ -224,6 +226,7 @@ impl Term {
             background,
             bce: back_color_erase(),
             presented: Presented::default(),
+            buf: Vec::new(),
         })
     }
 
@@ -297,85 +300,172 @@ impl Term {
     }
 
     pub fn present(&mut self, f: &Frame) -> io::Result<()> {
-        // A background change means every cell has to be rewritten.
-        let full = self
-            .shown
-            .as_ref()
-            .is_none_or(|s| s.w != f.w || s.h != f.h || s.bg != f.bg);
-        queue!(self.out, terminal::BeginSynchronizedUpdate)?;
-        if full {
-            queue!(self.out, ResetColor)?;
-            if let Some(Rgb(r, g, b)) = f.bg {
-                queue!(self.out, SetBackgroundColor(Color::Rgb { r, g, b }))?;
-            }
-            // Without a fill, or with `bce`, clearing paints the blank cells.
-            if f.bg.is_none() || self.bce {
-                queue!(self.out, terminal::Clear(terminal::ClearType::All))?;
-            }
-            match &mut self.shown {
-                Some(s) => s.clone_from(f),
-                None => self.shown = Some(f.clone()),
-            }
+        self.buf.clear();
+        self.presented = diff(&mut self.buf, &mut self.shown, f, self.bce)?;
+        // Nothing changed: write nothing, so the terminal isn't woken for an empty frame.
+        if self.buf.is_empty() {
+            return Ok(());
         }
-        let shown = self.shown.as_mut().expect("set above when missing");
-        let mut cells = 0;
-        let mut cur: Option<(i32, i32)> = None;
-        let mut color: Option<Rgb> = None;
-        // The background in effect: `Some(None)` is the terminal's default.
-        let mut back: Option<Option<Rgb>> = full.then_some(f.bg);
-        for y in 0..f.h {
-            for x in 0..f.w {
-                let i = (y * f.w + x) as usize;
-                let new = f.cells[i];
-                if full {
-                    // Blank cells were cleared already unless there's a fill to paint.
-                    if new.is_none() && (f.bg.is_none() || self.bce) {
-                        continue;
-                    }
-                } else {
-                    let same = match (new, shown.cells[i]) {
-                        (None, None) => true,
-                        (Some(a), Some(b)) => a.looks_like(b),
-                        _ => false,
-                    };
-                    if same {
-                        continue;
-                    }
-                    shown.cells[i] = new;
-                }
-                // The wide char to the left already covers this cell.
-                if new.is_some_and(|c| c.ch == WIDE_TAIL) {
+        queue!(self.out, terminal::BeginSynchronizedUpdate)?;
+        self.out.write_all(&self.buf)?;
+        queue!(self.out, terminal::EndSynchronizedUpdate)?;
+        self.out.flush()
+    }
+}
+
+/// Writes what changed from `shown` (what the terminal shows) to `f`, and
+/// updates `shown`. `bce`: clearing paints the current background.
+fn diff(out: &mut impl Write, shown: &mut Option<Frame>, f: &Frame, bce: bool) -> io::Result<Presented> {
+    // A background change means every cell has to be rewritten.
+    let full = shown.as_ref().is_none_or(|s| s.w != f.w || s.h != f.h || s.bg != f.bg);
+    if full {
+        queue!(out, ResetColor)?;
+        if let Some(Rgb(r, g, b)) = f.bg {
+            queue!(out, SetBackgroundColor(Color::Rgb { r, g, b }))?;
+        }
+        // Without a fill, or with `bce`, clearing paints the blank cells.
+        if f.bg.is_none() || bce {
+            queue!(out, terminal::Clear(terminal::ClearType::All))?;
+        }
+        match shown {
+            Some(s) => s.clone_from(f),
+            None => *shown = Some(f.clone()),
+        }
+    }
+    let shown = shown.as_mut().expect("set above when missing");
+    let mut cells = 0;
+    let mut cur: Option<(i32, i32)> = None;
+    let mut color: Option<Rgb> = None;
+    // The background in effect: `Some(None)` is the terminal's default.
+    let mut back: Option<Option<Rgb>> = full.then_some(f.bg);
+    for y in 0..f.h {
+        let row = (y * f.w) as usize;
+        for x in 0..f.w {
+            let i = row + x as usize;
+            let new = f.cells[i];
+            if full {
+                // Blank cells were cleared already unless there's a fill to paint.
+                if new.is_none() && (f.bg.is_none() || bce) {
                     continue;
                 }
-                cells += 1;
-                if cur != Some((x, y)) {
-                    queue!(self.out, cursor::MoveTo(x as u16, y as u16))?;
+            } else {
+                if unchanged(new, shown.cells[i]) {
+                    continue;
                 }
-                let want = new.and_then(|c| c.bg).or(f.bg);
-                if back != Some(want) {
-                    let color = want.map_or(Color::Reset, |Rgb(r, g, b)| Color::Rgb { r, g, b });
-                    queue!(self.out, SetBackgroundColor(color))?;
-                    back = Some(want);
-                }
-                let mut advance = 1;
-                match new {
-                    Some(c) => {
-                        if color != Some(c.fg) {
-                            let Rgb(r, g, b) = c.fg;
-                            queue!(self.out, SetForegroundColor(Color::Rgb { r, g, b }))?;
-                            color = Some(c.fg);
-                        }
-                        queue!(self.out, Print(c.ch))?;
-                        advance = c.ch.width().unwrap_or(1) as i32;
-                    }
-                    None => queue!(self.out, Print(' '))?,
-                }
-                cur = Some((x + advance, y));
+                shown.cells[i] = new;
             }
+            // The wide char to the left already covers this cell.
+            if new.is_some_and(|c| c.ch == WIDE_TAIL) {
+                continue;
+            }
+            cells += 1;
+            let want = new.and_then(|c| c.bg).or(f.bg);
+            if cur != Some((x, y)) {
+                // A short gap on the same row: printing the unchanged cells
+                // again can be cheaper than a cursor move.
+                match cur {
+                    Some((cx, cy)) if cy == y && cx < x => {
+                        let gap = &f.cells[row + cx as usize..i];
+                        if reprint_is_cheaper(gap, f.bg, back, color) {
+                            for c in gap {
+                                write!(out, "{}", c.map_or(' ', |c| c.ch))?;
+                            }
+                            shown.cells[row + cx as usize..i].copy_from_slice(gap);
+                        } else {
+                            queue!(out, cursor::MoveRight((x - cx) as u16))?;
+                        }
+                    }
+                    _ => queue!(out, cursor::MoveTo(x as u16, y as u16))?,
+                }
+            }
+            // The rest of the row is blank: erase it (`ESC [ K`) instead
+            // of printing spaces, when erasing paints what blanks show.
+            let rest = &f.cells[i..row + f.w as usize];
+            if (f.bg.is_none() || bce)
+                && rest.iter().all(Option::is_none)
+                && rest.iter().zip(&shown.cells[i..]).any(|(&a, &b)| !unchanged(a, b))
+            {
+                if back != Some(f.bg) {
+                    sgr(out, None, Some(f.bg))?;
+                    back = Some(f.bg);
+                }
+                queue!(out, terminal::Clear(terminal::ClearType::UntilNewLine))?;
+                shown.cells[i..row + f.w as usize].fill(None);
+                cur = Some((x, y));
+                break;
+            }
+            // Both colors in one SGR sequence when both change.
+            let fg = new.map(|c| c.fg).filter(|&fg| color != Some(fg));
+            let bg = (back != Some(want)).then_some(want);
+            if fg.is_some() || bg.is_some() {
+                sgr(out, fg, bg)?;
+                color = fg.or(color);
+                back = bg.or(back);
+            }
+            let mut advance = 1;
+            match new {
+                Some(c) => {
+                    queue!(out, Print(c.ch))?;
+                    advance = c.ch.width().unwrap_or(1) as i32;
+                }
+                None => queue!(out, Print(' '))?,
+            }
+            cur = Some((x + advance, y));
         }
-        queue!(self.out, terminal::EndSynchronizedUpdate)?;
-        self.presented = Presented { cells, full };
-        self.out.flush()
+    }
+    Ok(Presented { cells, full })
+}
+
+/// Whether printing the unchanged cells of a gap on the row again costs fewer
+/// bytes than moving past them (`ESC [ n C`); only cells that print as they
+/// are with the colors already set (`back`, `color`) qualify.
+#[allow(
+    clippy::option_option,
+    reason = "`Some(None)` is the terminal's default background, `None` unknown"
+)]
+fn reprint_is_cheaper(
+    gap: &[Option<Cell>],
+    frame_bg: Option<Rgb>,
+    back: Option<Option<Rgb>>,
+    color: Option<Rgb>,
+) -> bool {
+    let fits = gap.iter().all(|c| {
+        back == Some(c.and_then(|c| c.bg).or(frame_bg))
+            && c.is_none_or(|c| (c.ch == ' ' || Some(c.fg) == color) && c.ch.width() == Some(1))
+    });
+    let bytes: usize = gap.iter().map(|c| c.map_or(1, |c| c.ch.len_utf8())).sum();
+    fits && bytes < 3 + digits(gap.len() as i32)
+}
+
+/// `ESC [ 38;2;r;g;b ; 48;2;r;g;b m`, with either part left out; a `Some(None)`
+/// background is the terminal's default (`49`).
+#[allow(clippy::option_option, reason = "`Some(None)` is the terminal's default background")]
+fn sgr(out: &mut impl Write, fg: Option<Rgb>, bg: Option<Option<Rgb>>) -> io::Result<()> {
+    out.write_all(b"\x1b[")?;
+    if let Some(Rgb(r, g, b)) = fg {
+        write!(out, "38;2;{r};{g};{b}")?;
+        if bg.is_some() {
+            out.write_all(b";")?;
+        }
+    }
+    match bg {
+        Some(Some(Rgb(r, g, b))) => write!(out, "48;2;{r};{g};{b}")?,
+        Some(None) => out.write_all(b"49")?,
+        None => {}
+    }
+    out.write_all(b"m")
+}
+
+/// Decimal digits of a positive number, for escape sequence lengths.
+fn digits(n: i32) -> usize {
+    n.to_string().len()
+}
+
+fn unchanged(new: Option<Cell>, shown: Option<Cell>) -> bool {
+    match (new, shown) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a.looks_like(b),
+        _ => false,
     }
 }
 
@@ -470,6 +560,121 @@ pub fn restore() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Plays `diff`'s output on a minimal terminal (bce, the sequences it
+    /// writes) and checks the screen shows each of a run of random frames.
+    #[test]
+    #[allow(clippy::too_many_lines, reason = "a terminal emulator and a frame generator")]
+    fn diff_output_draws_the_frame() {
+        type Screen = Vec<(char, Rgb, Option<Rgb>)>;
+        fn play(screen: &mut Screen, w: usize, bytes: &[u8]) {
+            let text = std::str::from_utf8(bytes).unwrap();
+            let (mut cx, mut cy, mut fg, mut bg) = (0, 0, Rgb(0, 0, 0), None);
+            let mut it = text.chars().peekable();
+            while let Some(ch) = it.next() {
+                if ch != '\x1b' {
+                    screen[cy * w + cx] = (ch, fg, bg);
+                    cx += 1;
+                    continue;
+                }
+                assert_eq!(it.next(), Some('['));
+                let mut params = String::new();
+                let end = loop {
+                    let c = it.next().unwrap();
+                    if c.is_ascii_alphabetic() {
+                        break c;
+                    }
+                    params.push(c);
+                };
+                let n: Vec<u16> = params.split(';').filter_map(|p| p.parse().ok()).collect();
+                match end {
+                    'H' => (cy, cx) = (usize::from(n[0]) - 1, usize::from(n[1]) - 1),
+                    'C' => cx += usize::from(n[0]),
+                    'J' => screen.fill((' ', fg, bg)),
+                    'K' => screen[cy * w + cx..(cy + 1) * w].fill((' ', fg, bg)),
+                    'h' | 'l' => {} // synchronized update
+                    'm' => {
+                        let mut k = 0;
+                        while k < n.len() {
+                            let rgb = || Rgb(n[k + 2] as u8, n[k + 3] as u8, n[k + 4] as u8);
+                            match n[k] {
+                                0 => (fg, bg, k) = (Rgb(0, 0, 0), None, k + 1),
+                                38 => (fg, k) = (rgb(), k + 5),
+                                48 => (bg, k) = (Some(rgb()), k + 5),
+                                49 => (bg, k) = (None, k + 1),
+                                p => panic!("unexpected SGR {p}"),
+                            }
+                        }
+                    }
+                    e => panic!("unexpected escape {e}"),
+                }
+            }
+        }
+        let mut seed = 7u64;
+        let mut rnd = |n: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % n
+        };
+        let (w, h) = (16, 6);
+        for bce in [false, true] {
+            let mut f = Frame::new(w, h);
+            let mut shown = None;
+            let mut screen: Screen = vec![(' ', Rgb(0, 0, 0), None); usize::from(w * h)];
+            for step in 0..400 {
+                if rnd(40) == 0 {
+                    f.bg = [None, Some(Rgb(20, 20, 30))][rnd(2) as usize];
+                }
+                for _ in 0..rnd(30) {
+                    let (x, y) = (rnd(u64::from(w)) as i32, rnd(u64::from(h)) as i32);
+                    let pal = [Rgb(200, 10, 10), Rgb(10, 200, 10), Rgb(201, 11, 9)];
+                    let cell = (rnd(3) > 0).then(|| Cell {
+                        ch: ['a', 'b', ' ', '▀'][rnd(4) as usize],
+                        fg: pal[rnd(3) as usize],
+                        bg: [None, Some(Rgb(5, 5, 90))][rnd(2) as usize],
+                    });
+                    f.set(x, y, cell);
+                }
+                if rnd(5) == 0 {
+                    // Blank the end of a row.
+                    let (x, y) = (rnd(u64::from(w)) as i32, rnd(u64::from(h)) as i32);
+                    (x..i32::from(w)).for_each(|x| f.set(x, y, None));
+                }
+                let mut out = Vec::new();
+                diff(&mut out, &mut shown, &f, bce).unwrap();
+                play(&mut screen, usize::from(w), &out);
+                for (i, (&want, &(ch, fg, bg))) in f.cells.iter().zip(&screen).enumerate() {
+                    let near = |a: Rgb, b: Rgb| {
+                        Cell {
+                            ch: ' ',
+                            fg: a,
+                            bg: None,
+                        }
+                        .looks_like(Cell {
+                            ch: ' ',
+                            fg: b,
+                            bg: None,
+                        })
+                    };
+                    let bg_ok = |want: Option<Rgb>| match (bg, want) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => near(a, b),
+                        _ => false,
+                    };
+                    let ok = match want {
+                        None => ch == ' ' && bg_ok(f.bg),
+                        Some(c) => ch == c.ch && (c.ch == ' ' || near(fg, c.fg)) && bg_ok(c.bg.or(f.bg)),
+                    };
+                    assert!(
+                        ok,
+                        "bce {bce}, step {step}, cell {i}: want {want:?}, screen {:?}",
+                        (ch, fg, bg)
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn parses_background_replies() {

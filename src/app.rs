@@ -503,6 +503,20 @@ impl<'a> App<'a> {
             || self.target.nixie.is_some() && (self.cli.flicker || now - self.fx_end.0 < nixie::REST_FADE)
     }
 
+    /// How long an idle frame may sleep: until the shown second changes, capped
+    /// at `max`, and not past a scheduled effect (`IDLE_FRAME` then, as before).
+    pub fn idle_wait(&self, now: f64, max: Duration, short: Duration) -> Duration {
+        if self.pending.is_some() || self.next_mark.is_some() || self.next_effect_at - now < max.as_secs_f64() {
+            return short;
+        }
+        // The countdown changes as `left` crosses a whole second, the overtime as `elapsed` does.
+        let to_left = Duration::from_nanos(u64::from(self.left.subsec_nanos()));
+        let to_over = Duration::from_nanos(1_000_000_000 - u64::from(self.elapsed.subsec_nanos()));
+        let next = if self.finished_at.is_some() { to_over } else { to_left };
+        // A little past the change, so the frame doesn't land just before it.
+        (next + Duration::from_millis(2)).min(max)
+    }
+
     fn hour_width(&self) -> usize {
         if self.cli.pad_hours { 2 } else { 1 }
     }

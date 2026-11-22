@@ -44,6 +44,8 @@ use crate::{
 const MAX_EVENTS_PER_FRAME: usize = 64;
 /// Frame interval when nothing is animating (the gradient drift is slow).
 const IDLE_FRAME: Duration = Duration::from_millis(50);
+/// Longest idle sleep while no effect is due: the clock only changes each second.
+const IDLE_SLEEP: Duration = Duration::from_millis(250);
 /// How often headless mode wakes up.
 const HEADLESS_TICK: Duration = Duration::from_millis(100);
 /// How often a viewer (`t- ctl attach`) reads the state of the timer it shows.
@@ -412,6 +414,8 @@ fn watch_signals() -> std::io::Result<Arc<AtomicBool>> {
     ] {
         signal_hook::flag::register(sig, Arc::clone(&signalled))?;
     }
+    // Only so a resize cuts a long idle sleep short (poll returns EINTR).
+    signal_hook::flag::register(signal_hook::consts::SIGWINCH, Arc::new(AtomicBool::new(false)))?;
     Ok(signalled)
 }
 
@@ -619,7 +623,7 @@ fn run(cli: &Cli, app: &mut App, mut server: Option<Server>) -> std::io::Result<
         let budget = if app.animating(now) {
             frame_dur
         } else {
-            frame_dur.max(IDLE_FRAME)
+            frame_dur.max(app.idle_wait(now, IDLE_SLEEP, IDLE_FRAME))
         };
         if let Some(wait) = budget.checked_sub(tick.elapsed())
             && term.wait_input(wait)? == Input::HungUp
