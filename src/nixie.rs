@@ -1495,24 +1495,29 @@ fn settled_cells(sc: &Scene, cells: &[CellAt], f: &Frame) -> Vec<bool> {
 fn bloom(sc: &Scene, nx: &Layout, base: &Frame, rest: &Frame, f: &mut Frame) {
     let glowing = nx.style.effect_glow && nx.field.m == 1 && !is_light(sc.rest);
     let (seps, tubes): (Vec<_>, Vec<_>) = slot_cells(sc, nx).partition(|(slot, _)| slot.lamp == Lamp::Colon);
-    // How many of the digits' wire cells the effect has settled.
-    let (mut done, mut wires) = (0.0, 0.0);
+    // How far the digits look from unlit to rest (in brightness).
+    let lum = |c: Option<Rgb>| {
+        let Rgb(r, g, b) = c.unwrap_or(sc.rest);
+        f32::from(r) + f32::from(g) + f32::from(b)
+    };
+    let (mut off, mut unlit) = (0.0, 0.0);
     for (slot, cells) in tubes {
         let settled = settled_cells(sc, &cells, f);
-        for (&(i, _), &s) in cells.iter().zip(&settled) {
-            if sc.settled(i).is_some() {
-                wires += 1.0;
-                done += f32::from(u8::from(s));
-            }
-        }
         if glowing && let Some(p) = played(&cells, slot.w, base, f) {
             light(sc, nx, slot, &cells, &p, f);
         }
-        for (&(_, (x, y)), _) in cells.iter().zip(&settled).filter(|(_, s)| **s) {
-            f.set(x, y, rest.get(x, y));
+        for (&(_, (x, y)), &s) in cells.iter().zip(&settled) {
+            if s {
+                f.set(x, y, rest.get(x, y));
+            }
+            let pixels = halves(f.get(x, y)).into_iter().zip(halves(base.get(x, y)));
+            for ((now, was), at_rest) in pixels.zip(halves(rest.get(x, y))) {
+                off += (lum(now) - lum(at_rest)).abs();
+                unlit += (lum(was) - lum(at_rest)).abs();
+            }
         }
     }
-    let digits = if wires > 0.0 { done / wires } else { 1.0 };
+    let digits = if unlit > 0.0 { 1.0 - off / unlit } else { 1.0 };
     for (_, cells) in seps {
         separator(sc, &cells, digits, base, rest, f);
     }
@@ -1520,8 +1525,8 @@ fn bloom(sc: &Scene, nx: &Layout, base: &Frame, rest: &Frame, f: &mut Frame) {
 
 /// A separator under an effect (it has no glass to light): as lit as the
 /// effect has drawn its dots, against them at rest, glow and bulb included,
-/// but no further than the `digits` are settled, so it fades in with the
-/// numbers and is at rest once they all are. Anything else the effect
+/// but no further than the `digits` look (0..1 from unlit to rest), so it
+/// comes up with the numbers, the crossfade after the effect included. Anything else the effect
 /// draws over it stays on top.
 fn separator(sc: &Scene, cells: &[CellAt], digits: f32, base: &Frame, rest: &Frame, f: &mut Frame) {
     let lum = |c: Rgb| f32::from(c.0) + f32::from(c.1) + f32::from(c.2);
@@ -2301,17 +2306,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn an_effect_ends_close_to_the_tubes_at_rest() {
-        let themes = crate::theme::builtin();
-        let mut target = crate::scene::Target::empty();
-        target.update(
-            glyphs("24:59", 118, 32, Style::default(), false).expect("fits"),
-            0.0,
-            usize::MAX,
-        );
-        let mut sc = Scene {
-            t: &target,
+    /// A 120 x 36 screen showing `target`, at rest.
+    fn scene<'a>(target: &'a crate::scene::Target, themes: &'a [crate::theme::Theme]) -> Scene<'a> {
+        Scene {
+            t: target,
             ox: 1,
             oy: 1,
             sw: 120,
@@ -2326,7 +2324,59 @@ mod tests {
             rest_k: 1.0,
             blink_dark: false,
             pulse: 0.0,
+        }
+    }
+
+    #[test]
+    fn separators_come_up_with_the_digits() {
+        let themes = crate::theme::builtin();
+        let mut target = crate::scene::Target::empty();
+        target.update(
+            glyphs("24:59", 118, 32, Style::default(), false).expect("fits"),
+            0.0,
+            usize::MAX,
+        );
+        let sc = scene(&target, &themes);
+        let nx = target.nixie.as_ref().unwrap();
+        let (mut rest, mut base, mut lit) = (Frame::new(120, 36), Frame::new(120, 36), Frame::new(120, 36));
+        sc.draw_settled(&mut rest);
+        draw(&sc, nx, &mut base, false);
+        // How an effect ends: the settled wires, the separators' dots included.
+        under_effect(&sc, &mut lit, |f| sc.draw_cells(f, 0));
+        let lum = |c: Option<Rgb>| {
+            let Rgb(r, g, b) = c.unwrap_or(sc.rest);
+            f32::from(r) + f32::from(g) + f32::from(b)
         };
+        // As far as the digits look, no further (from unlit to rest; the
+        // crossfade after the effect does the rest of both).
+        let look = |colon: bool| {
+            let (mut off, mut unlit) = (0.0, 0.0);
+            for (_, cells) in slot_cells(&sc, nx).filter(|(slot, _)| (slot.lamp == Lamp::Colon) == colon) {
+                for (_, (x, y)) in cells {
+                    let pixels = halves(lit.get(x, y)).into_iter().zip(halves(base.get(x, y)));
+                    for ((now, was), at_rest) in pixels.zip(halves(rest.get(x, y))) {
+                        off += (lum(now) - lum(at_rest)).abs();
+                        unlit += (lum(was) - lum(at_rest)).abs();
+                    }
+                }
+            }
+            1.0 - off / unlit
+        };
+        let (seps, digits) = (look(true), look(false));
+        assert!(digits < 0.99, "digits already at rest ({digits})");
+        assert!((seps - digits).abs() < 0.05, "separators {seps} digits {digits}");
+    }
+
+    #[test]
+    fn an_effect_ends_close_to_the_tubes_at_rest() {
+        let themes = crate::theme::builtin();
+        let mut target = crate::scene::Target::empty();
+        target.update(
+            glyphs("24:59", 118, 32, Style::default(), false).expect("fits"),
+            0.0,
+            usize::MAX,
+        );
+        let mut sc = scene(&target, &themes);
         let frame = |draw: &dyn Fn(&mut Frame)| {
             let mut f = Frame::new(120, 36);
             draw(&mut f);
@@ -2374,12 +2424,6 @@ mod tests {
             under_effect(&plain_sc, f, |f| plain_sc.draw_cells(f, 0));
         });
         assert!(off(&dark) < -10.0, "glass lit by {} without effect glow", off(&dark));
-        // Separators are at rest, glow and all, once their dots are.
-        for (slot, cells) in slot_cells(&sc, target.nixie.as_ref().unwrap()) {
-            if slot.lamp == Lamp::Colon {
-                assert!(cells.iter().all(|&(_, (x, y))| lit.get(x, y) == rest.get(x, y)));
-            }
-        }
         // The crossfade after an effect starts from its last frame, symbols
         // and all (one cut short in the middle, say).
         let mut fx = crate::effects::make(
