@@ -1494,12 +1494,17 @@ fn settled_cells(sc: &Scene, cells: &[CellAt], f: &Frame) -> Vec<bool> {
 /// background). Separators fade in with their dots (`separator`).
 fn bloom(sc: &Scene, nx: &Layout, base: &Frame, rest: &Frame, f: &mut Frame) {
     let glowing = nx.style.effect_glow && nx.field.m == 1 && !is_light(sc.rest);
-    for (slot, cells) in slot_cells(sc, nx) {
-        if slot.lamp == Lamp::Colon {
-            separator(sc, &cells, base, rest, f);
-            continue;
-        }
+    let (seps, tubes): (Vec<_>, Vec<_>) = slot_cells(sc, nx).partition(|(slot, _)| slot.lamp == Lamp::Colon);
+    // How many of the digits' wire cells the effect has settled.
+    let (mut done, mut wires) = (0.0, 0.0);
+    for (slot, cells) in tubes {
         let settled = settled_cells(sc, &cells, f);
+        for (&(i, _), &s) in cells.iter().zip(&settled) {
+            if sc.settled(i).is_some() {
+                wires += 1.0;
+                done += f32::from(u8::from(s));
+            }
+        }
         if glowing && let Some(p) = played(&cells, slot.w, base, f) {
             light(sc, nx, slot, &cells, &p, f);
         }
@@ -1507,13 +1512,18 @@ fn bloom(sc: &Scene, nx: &Layout, base: &Frame, rest: &Frame, f: &mut Frame) {
             f.set(x, y, rest.get(x, y));
         }
     }
+    let digits = if wires > 0.0 { done / wires } else { 1.0 };
+    for (_, cells) in seps {
+        separator(sc, &cells, digits, base, rest, f);
+    }
 }
 
 /// A separator under an effect (it has no glass to light): as lit as the
 /// effect has drawn its dots, against them at rest, glow and bulb included,
-/// so it fades in with them and is at rest once they are. Anything else the
-/// effect draws over it stays on top.
-fn separator(sc: &Scene, cells: &[CellAt], base: &Frame, rest: &Frame, f: &mut Frame) {
+/// but no further than the `digits` are settled, so it fades in with the
+/// numbers and is at rest once they all are. Anything else the effect
+/// draws over it stays on top.
+fn separator(sc: &Scene, cells: &[CellAt], digits: f32, base: &Frame, rest: &Frame, f: &mut Frame) {
     let lum = |c: Rgb| f32::from(c.0) + f32::from(c.1) + f32::from(c.2);
     let dot = |i: usize, c: Option<Cell>| sc.settled(i).zip(c).filter(|(want, c)| want.ch == c.ch);
     let (mut lit, mut dots) = (0.0, 0.0);
@@ -1525,7 +1535,7 @@ fn separator(sc: &Scene, cells: &[CellAt], base: &Frame, rest: &Frame, f: &mut F
             }
         }
     }
-    let k = if dots > 0.0 { lit / dots } else { 0.0 };
+    let k = if dots > 0.0 { lit / dots } else { 0.0 }.min(digits);
     for &(i, (x, y)) in cells {
         let (drawn, was) = (f.get(x, y), base.get(x, y));
         if drawn != was && dot(i, drawn).is_none() {
