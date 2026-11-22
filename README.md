@@ -35,13 +35,16 @@ that replay every so often.
   drawn as true-color half-block pixels (small tubes as crisp octant wires
   without glass, in terminals that draw them, `--small-tubes`), with glass,
   unlit cathodes behind the lit one, glow, and a crossfade as digits change. Each part can be switched
-  off (`--no-glass`, `--unlit 0`, `--glow 0`, `--separator none`);
+  off (`--no-glass`, `--unlit 0`, `--glow 0`, `--separator none`,
+  `--no-effect-glow` for effects lighting the glass);
   `--separator dot`, `--blink`, `--glass-tip`, `--flicker`, `--brightness`,
   `--nixie-color theme` (or `theme-solid`, one color; `theme-heavy`,
   drifting) and `--background dark` change the look.
   The `slotmachine` effect runs every tube through all ten digits, like a
   nixie clock keeping its cathodes healthy; it's the only effect with nixie tubes
-  unless you pick others with `--effect`.
+  unless you pick others with `--effect`. The others work and light the glass,
+  but were made for the text fonts: some (`matrix`, effects that fill the screen
+  with symbols) look out of place over the tubes.
   Letters for `--done-text` (wrapped onto several lines if long), titles and
   `2d`/`1h 05m` go in symbol tubes inspired by the IN-15.
 - Tenths/hundredths of a second, a progress bar, large or small titles, and

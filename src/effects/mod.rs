@@ -332,7 +332,7 @@ mod tests {
                 tick_fx: true,
                 urgency: 0.0,
                 rest: themes[0].bg,
-                glow_k: 1.0,
+                rest_k: 1.0,
                 blink_dark: false,
                 pulse: 0.0,
             };
@@ -406,7 +406,7 @@ mod tests {
                     tick_fx: true,
                     urgency: 0.0,
                     rest: themes[0].bg,
-                    glow_k: 1.0,
+                    rest_k: 1.0,
                     blink_dark: false,
                     pulse: 0.0,
                 };
@@ -464,7 +464,7 @@ mod tests {
                         tick_fx: true,
                         urgency: 0.0,
                         rest: themes[0].bg,
-                        glow_k: 1.0,
+                        rest_k: 1.0,
                         blink_dark: false,
                         pulse: 0.0,
                     };

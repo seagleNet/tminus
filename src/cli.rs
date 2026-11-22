@@ -261,6 +261,12 @@ pub struct Cli {
     #[arg(long, hide = true, overrides_with = "flicker")]
     pub no_flicker: bool,
 
+    /// Don't let effects light the tubes' glass (they play over it unlit)
+    #[arg(long, overrides_with = "effect_glow", help_heading = "Nixie font")]
+    pub no_effect_glow: bool,
+    #[arg(long, hide = true, overrides_with = "no_effect_glow")]
+    pub effect_glow: bool,
+
     /// Don't scramble digits as they tick
     #[arg(long, overrides_with = "tick_fx")]
     pub no_tick_fx: bool,

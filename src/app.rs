@@ -123,22 +123,35 @@ fn random_other(rng: &mut impl rand::Rng, i: usize, len: usize) -> usize {
 
 /// Draw the clock and title: the playing effect, else at rest. Returns true
 /// when the effect is done.
-fn draw_canvas(sc: &Scene, effect: &mut Option<(Box<dyn effects::Effect>, f64)>, now: f64, f: &mut Frame) -> bool {
+fn draw_canvas(
+    sc: &Scene,
+    effect: &mut Option<(Box<dyn effects::Effect>, f64)>,
+    fx_last: &mut Frame,
+    now: f64,
+    f: &mut Frame,
+) -> bool {
+    let tubes = sc.t.nixie.is_some() || sc.t.nixie_title.is_some();
     let Some((fx, start)) = effect else {
         sc.draw_settled(f);
+        if tubes && sc.rest_k < 1.0 {
+            nixie::crossfade(sc, fx_last, f);
+        }
         return false;
     };
-    // The effect plays the nixie wires; the glass stays.
-    if !fx.keeps_tubes() {
-        for nx in sc.t.nixie.iter().chain(&sc.t.nixie_title) {
-            nixie::draw(sc, nx, f, false);
-        }
+    let t = (now - *start) as f32;
+    if !tubes || fx.keeps_tubes() {
+        fx.draw(sc, t, f)
+    } else {
+        // The effect plays the nixie wires over the glass, and lights it.
+        let done = nixie::under_effect(sc, f, |f| fx.draw(sc, t, f));
+        // Its last frame (nothing else drawn yet) to cross over from.
+        fx_last.clone_from(f);
+        done
     }
-    fx.draw(sc, (now - *start) as f32, f)
 }
 
-/// Stop the playing effect; the nixie glow fades back in (from `fx_end`)
-/// after one that hid it.
+/// Stop the playing effect; after one that played the nixie wires, the
+/// clock crosses over to rest from its last frame (`fx_end`).
 fn end_effect(effect: &mut Option<(Box<dyn effects::Effect>, f64)>, fx_end: &mut f64, now: f64) {
     if effect.take().is_some_and(|(fx, _)| !fx.keeps_tubes()) {
         *fx_end = now;
@@ -196,8 +209,9 @@ pub struct App<'a> {
     help: bool,
     /// Set in `--demo` mode.
     demo: Option<Demo>,
-    /// When the last effect ended (the nixie glow fades back in after it).
-    fx_end: f64,
+    /// When the last effect ended, and its last frame: nixie tubes cross
+    /// over from it to rest.
+    fx_end: (f64, Frame),
     /// Showing a timer that runs in another process (`t- ctl attach`):
     /// its segment changes come from there (`sync`), not from `tick`.
     pub viewing: bool,
@@ -234,7 +248,7 @@ impl<'a> App<'a> {
             status_time: cli.status_time,
             help: false,
             demo,
-            fx_end: f64::NEG_INFINITY,
+            fx_end: (f64::NEG_INFINITY, Frame::new(0, 0)),
             viewing: false,
         };
         app.sample();
@@ -310,7 +324,7 @@ impl<'a> App<'a> {
         self.timer = Timer::new(self.plan[self.seg].dur);
         self.finished_at = None;
         self.theme = self.plan[self.seg].theme.unwrap_or(self.base_theme);
-        end_effect(&mut self.effect, &mut self.fx_end, now);
+        end_effect(&mut self.effect, &mut self.fx_end.0, now);
         self.pending = None;
         self.next_mark = None;
         self.next_effect_at = now;
@@ -478,7 +492,7 @@ impl<'a> App<'a> {
             || (self.cli.alert > 0.0 && self.urgency() > 0.0)
             || flashing(self.finished_at)
             || flashing(self.switched_at)
-            || self.target.nixie.is_some() && (self.cli.flicker || now - self.fx_end < nixie::GLOW_FADE)
+            || self.target.nixie.is_some() && (self.cli.flicker || now - self.fx_end.0 < nixie::REST_FADE)
     }
 
     fn hour_width(&self) -> usize {
@@ -927,14 +941,14 @@ impl<'a> App<'a> {
             tick_fx: !cli.no_tick_fx,
             urgency: self.urgency(),
             rest: bg.or(self.term_bg).unwrap_or(self.themes[self.theme].bg),
-            glow_k: ((now - self.fx_end) / nixie::GLOW_FADE).clamp(0.0, 1.0) as f32,
+            rest_k: ((now - self.fx_end.0) / nixie::REST_FADE).clamp(0.0, 1.0) as f32,
             blink_dark: self.blink_dark(),
             pulse: self.tube_pulse(now),
         };
 
         // Keep the final seconds readable: no big effects (tick scramble stays).
         if self.in_final_seconds() {
-            end_effect(&mut self.effect, &mut self.fx_end, now);
+            end_effect(&mut self.effect, &mut self.fx_end.0, now);
             self.pending = None;
         } else if let Some(p) = self.pending.take() {
             // Start once the time left to the round number is the effect's length.
@@ -994,9 +1008,9 @@ impl<'a> App<'a> {
         }
 
         self.frame.clear();
-        let done = draw_canvas(&sc, &mut self.effect, now, &mut self.frame);
+        let done = draw_canvas(&sc, &mut self.effect, &mut self.fx_end.1, now, &mut self.frame);
         if done {
-            end_effect(&mut self.effect, &mut self.fx_end, now);
+            end_effect(&mut self.effect, &mut self.fx_end.0, now);
             self.next_effect_at = self.next_replay(now);
             if let Some(demo) = self.demo.as_mut().filter(|d| d.auto) {
                 demo.step(true);
@@ -1354,6 +1368,7 @@ impl<'a> App<'a> {
             octants: cli.small_tubes.octants(),
             blink: cli.blink,
             flicker: cli.flicker,
+            effect_glow: !cli.no_effect_glow,
         }
     }
 

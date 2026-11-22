@@ -85,12 +85,17 @@ impl Frame {
         }
     }
 
-    fn bg_at(&self, x: i32, y: i32) -> Option<Rgb> {
+    /// The cell at (`x`, `y`), `None` if empty or off the frame.
+    pub fn get(&self, x: i32, y: i32) -> Option<Cell> {
         if x >= 0 && y >= 0 && x < self.w && y < self.h {
-            self.cells[(y * self.w + x) as usize].and_then(|c| c.bg)
+            self.cells[(y * self.w + x) as usize]
         } else {
             None
         }
+    }
+
+    fn bg_at(&self, x: i32, y: i32) -> Option<Rgb> {
+        self.get(x, y).and_then(|c| c.bg)
     }
 
     /// Put one char. Double-width chars also claim the cell to their right;

@@ -93,6 +93,8 @@ pub struct Style {
     /// Separator lit only every other second.
     pub blink: bool,
     pub flicker: bool,
+    /// Effects light the glass (`bloom`).
+    pub effect_glow: bool,
 }
 
 impl Default for Style {
@@ -108,6 +110,7 @@ impl Default for Style {
             octants: false,
             blink: false,
             flicker: false,
+            effect_glow: true,
         }
     }
 }
@@ -130,6 +133,8 @@ const DOT_HALF: f32 = 0.08;
 const TIP: f32 = 0.16;
 /// How far the glow reaches.
 const GLOW_R: f32 = 0.09;
+/// How far a lamp lights its glass (the rim and streak).
+const NEAR_R: f32 = 0.35;
 /// Title tubes: the widest, and the narrowest in which letters still read.
 const TITLE_TUBE_W: usize = 16;
 const MIN_TITLE_TUBE_W: usize = 10;
@@ -149,6 +154,11 @@ impl Style {
         if self.octants { MIN_FINE_TUBE_W } else { MIN_TUBE_W }
     }
 
+    /// How strongly a lit lamp glows now, flaring with the alert `pulse`.
+    fn lamp(self, pulse: f32) -> f32 {
+        self.glow * 1.4 * (1.0 + 2.0 * pulse)
+    }
+
     fn min_title_tube(self) -> usize {
         if self.octants {
             MIN_FINE_TUBE_W
@@ -164,8 +174,8 @@ impl Style {
 }
 /// Steps of the crossfade when a digit changes.
 const FADE_STEPS: f32 = 8.0;
-/// After an effect the glow comes back over this long.
-pub const GLOW_FADE: f64 = 0.6;
+/// After an effect, the tubes cross over to rest in this long.
+pub const REST_FADE: f64 = 0.6;
 
 const NEON: Rgb = Rgb::hex("#ff6e14");
 const NEON_HOT: Rgb = Rgb::hex("#ffdcaa");
@@ -497,42 +507,100 @@ fn tip(p: Pt, x: f32, top: f32, len: f32, r: f32) -> f32 {
     seg_dist(p, (x, top - len + r), (x, top)) - r
 }
 
-/// The glow of one cathode's wire (`core`, its coverage over a tube `w` x `h`
-/// pixels, `s` pixels a unit): the wire blurred like a bloom pass, so
-/// crossings glow brighter and ends fade. Two Gaussians, fitted to fall off
-/// like `exp(-d / GLOW_R)` beside a straight wire, where it's 1.
-fn halo(core: &[f32], w: usize, h: usize, s: f32) -> Vec<f32> {
-    // Weight and sigma (in `GLOW_R`) of each blur.
+/// The light of a wire (`core`, its coverage over a tube `w` x `h` pixels,
+/// `s` pixels a unit) reaching `r` units: the wire blurred like a bloom
+/// pass, so crossings get more and ends less. Two Gaussians, fitted to fall
+/// off like `exp(-d / r)` beside a straight wire, where it's 1. The glow is
+/// this at `GLOW_R`; effects light the tubes with it every frame (`bloom`).
+fn halo<const N: usize>(core: &[[f32; N]], w: usize, h: usize, s: f32, r: f32) -> Vec<[f32; N]> {
+    // Weight and sigma (in `r`) of each blur.
     const BLURS: [(f32, f32); 2] = [(0.483, 0.28), (0.517, 1.237)];
-    let width = STROKE.max(1.0 / s);
-    let mut out = vec![0.0; w * h];
-    let mut row = vec![0.0; w * h];
+    let mut out = vec![[0.0; N]; w * h];
     for (weight, sigma) in BLURS {
-        let sigma = sigma * GLOW_R * s;
-        let r = (3.0 * sigma).ceil() as isize;
-        let kernel: Vec<f32> = (-r..=r)
-            .map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp())
-            .collect();
-        // What a straight wire's middle comes out at, to scale that to 1.
-        let across: f32 = (-r..=r)
-            .zip(&kernel)
-            .map(|(i, k)| k * cover(i.unsigned_abs() as f32 / s, width, 1.0 / s))
-            .sum();
-        let scale = weight / (across * kernel.iter().sum::<f32>());
-        // Separable: along rows into `row`, then down columns into `out`.
-        let taps = |at: usize, n: usize| {
-            (-r..=r)
-                .zip(&kernel)
-                .filter_map(move |(i, &k)| at.checked_add_signed(i).filter(|&j| j < n).map(|j| (j, k)))
-        };
-        for y in 0..h {
-            for x in 0..w {
-                row[y * w + x] = taps(x, w).map(|(j, k)| k * core[y * w + j]).sum();
+        for (o, b) in out.iter_mut().zip(soft(core, w, h, s, sigma * r)) {
+            for c in 0..N {
+                o[c] += weight * b[c];
             }
         }
-        for y in 0..h {
+    }
+    out
+}
+
+/// `src` blurred by a Gaussian `sigma` units wide, scaled so a straight
+/// wire's middle stays as bright. Wide blurs run at lower resolution, as
+/// bloom passes do (too soft to tell): a box down, bilinear back up.
+fn soft<const N: usize>(src: &[[f32; N]], w: usize, h: usize, s: f32, sigma: f32) -> Vec<[f32; N]> {
+    let sigma = sigma * s;
+    let f = (sigma / 1.5).floor().clamp(1.0, 4.0) as usize;
+    let (blurred, sigma) = if f == 1 {
+        (blur(src, w, h, sigma), sigma)
+    } else {
+        let (cw, ch) = (w.div_ceil(f), h.div_ceil(f));
+        let mut small = vec![[0.0; N]; cw * ch];
+        for (j, v) in src.iter().enumerate() {
+            let to = &mut small[(j / w / f) * cw + j % w / f];
+            for c in 0..N {
+                to[c] += v[c] / (f * f) as f32;
+            }
+        }
+        let small = blur(&small, cw, ch, sigma / f as f32);
+        let at = |x: usize, y: usize| small[y.min(ch - 1) * cw + x.min(cw - 1)];
+        let lerp = |a: [f32; N], b: [f32; N], t: f32| std::array::from_fn(|c| a[c] + (b[c] - a[c]) * t);
+        let up = (0..w * h).map(|j| {
+            let at_f = |v: usize| (v as f32 + 0.5) / f as f32 - 0.5;
+            let (fx, fy) = (at_f(j % w), at_f(j / w));
+            let (x0, y0) = (fx.max(0.0) as usize, fy.max(0.0) as usize);
+            let (tx, ty) = ((fx - x0 as f32).clamp(0.0, 1.0), (fy - y0 as f32).clamp(0.0, 1.0));
+            let top = lerp(at(x0, y0), at(x0 + 1, y0), tx);
+            lerp(top, lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), tx), ty)
+        });
+        // The box and the interpolation widen it a little.
+        let f = f as f32;
+        (up.collect(), (sigma * sigma + f * f / 8.0).sqrt())
+    };
+    // What a straight wire's middle comes out at, to scale that to 1.
+    let width = STROKE.max(1.0 / s);
+    let across: f32 = kernel(sigma)
+        .map(|(i, k)| k * cover(i.unsigned_abs() as f32 / s, width, 1.0 / s))
+        .sum();
+    blurred.into_iter().map(|b| b.map(|v| v / across)).collect()
+}
+
+/// A Gaussian kernel summing to 1: (offset, weight).
+fn kernel(sigma: f32) -> impl Iterator<Item = (isize, f32)> {
+    let r = (3.0 * sigma).ceil() as isize;
+    let g = move |i: isize| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp();
+    let sum: f32 = (-r..=r).map(g).sum();
+    (-r..=r).map(move |i| (i, g(i) / sum))
+}
+
+/// `src` (`w` x `h`) blurred by a Gaussian, along rows then down columns.
+/// The first pass spreads only lit pixels (effects and wires light few).
+fn blur<const N: usize>(src: &[[f32; N]], w: usize, h: usize, sigma: f32) -> Vec<[f32; N]> {
+    let k: Vec<(isize, f32)> = kernel(sigma).collect();
+    let mut row = vec![[0.0; N]; w * h];
+    for (j, v) in src.iter().enumerate().filter(|(_, v)| v.iter().any(|&c| c != 0.0)) {
+        let (x, y) = (j % w, j / w);
+        for &(i, kv) in &k {
+            if let Some(x) = x.checked_add_signed(i).filter(|&x| x < w) {
+                let to = &mut row[y * w + x];
+                for c in 0..N {
+                    to[c] += kv * v[c];
+                }
+            }
+        }
+    }
+    let mut out = vec![[0.0; N]; w * h];
+    for y in 0..h {
+        for &(i, kv) in &k {
+            let Some(from) = y.checked_add_signed(i).filter(|&y| y < h) else {
+                continue;
+            };
             for x in 0..w {
-                out[y * w + x] += scale * taps(y, h).map(|(j, k)| k * row[j * w + x]).sum::<f32>();
+                let (to, v) = (&mut out[y * w + x], row[from * w + x]);
+                for c in 0..N {
+                    to[c] += kv * v[c];
+                }
             }
         }
     }
@@ -565,8 +633,8 @@ pub struct Field {
     /// Pixels a cell is wide (`Style::per_cell`): 2 for octants.
     m: usize,
     /// The cells each slot was last drawn as, and what from (see
-    /// `draw_lamps`), by the layout's row and the slot.
-    cache: RefCell<Vec<((usize, usize), Drawn)>>,
+    /// `draw_lamps`), by the layout's row, the slot and whether it's lit.
+    cache: RefCell<Vec<(Place, Drawn)>>,
 }
 
 /// A group's cathodes in one tube size.
@@ -705,14 +773,14 @@ impl Field {
                     core: d.map(|d| cover(d, STROKE.max(1.0 / s), 1.0 / s)),
                     unlit: d.map(|d| cover(d, STROKE * 0.6, 1.0 / s)),
                     halo: [0.0; 11],
-                    near: d.map(|d| (-d / 0.35).exp()),
+                    near: d.map(|d| (-d / NEAR_R).exp()),
                 });
             }
         }
         for k in 0..11 {
-            let core: Vec<f32> = shade.iter().map(|p| p.core[k]).collect();
-            if core.iter().any(|&c| c > 0.0) {
-                for (p, g) in shade.iter_mut().zip(halo(&core, self.w, self.h, s)) {
+            let core: Vec<[f32; 1]> = shade.iter().map(|p| [p.core[k]]).collect();
+            if core.iter().any(|&[c]| c > 0.0) {
+                for (p, [g]) in shade.iter_mut().zip(halo(&core, self.w, self.h, s, GLOW_R)) {
                     p.halo[k] = g;
                 }
             }
@@ -1233,6 +1301,299 @@ fn colon_pixel(px: f32, rest: Rgb, at: &SepPx, k: f32, c: Colors, glow: f32) -> 
     (shown || core > 0.0).then(|| to_rgb(col))
 }
 
+/// Whether `bg` is a light background.
+fn is_light(Rgb(r, g, b): Rgb) -> bool {
+    f32::from(r) * 0.3 + f32::from(g) * 0.6 + f32::from(b) * 0.1 > 128.0
+}
+
+/// Run `play` (an effect) over the tubes drawn unlit (glass and unlit
+/// cathodes), then light them with what it drew (`bloom`).
+pub fn under_effect<R>(sc: &Scene, f: &mut Frame, play: impl FnOnce(&mut Frame) -> R) -> R {
+    let tubes = || sc.t.nixie.iter().chain(&sc.t.nixie_title);
+    for nx in tubes() {
+        draw(sc, nx, f, false);
+    }
+    let base = f.clone();
+    let done = play(f);
+    let mut rest = base.clone();
+    for nx in tubes() {
+        draw(sc, nx, &mut rest, true);
+    }
+    for nx in tubes() {
+        bloom(sc, nx, &base, &rest, f);
+    }
+    done
+}
+
+/// After an effect, blend the clock at rest (in `f`, nothing else drawn
+/// yet) from the effect's last frame (`from`, likewise), over the whole
+/// screen: wires, glass and whatever else it left. Its symbols fade out over
+/// the first half.
+pub fn crossfade(sc: &Scene, from: &Frame, f: &mut Frame) {
+    if (from.w, from.h) != (f.w, f.h) {
+        return;
+    }
+    let k = sc.rest_k;
+    // A pixel drawn on one side only stays empty (the terminal's own
+    // background, maybe transparent) until it shows.
+    let mix = |a: Option<Rgb>, b: Option<Rgb>| {
+        let c = a.unwrap_or(sc.rest).lerp(b.unwrap_or(sc.rest), k);
+        let shows = |c: Rgb| {
+            c.0.abs_diff(sc.rest.0)
+                .max(c.1.abs_diff(sc.rest.1))
+                .max(c.2.abs_diff(sc.rest.2))
+                > 2
+        };
+        ((a.is_some() && b.is_some()) || (a.or(b).is_some() && shows(c))).then_some(c)
+    };
+    let (w, h) = (f.w, f.h);
+    for (x, y) in (0..h).flat_map(|y| (0..w).map(move |x| (x, y))) {
+        let (was, now) = (from.get(x, y), f.get(x, y));
+        if was == now {
+            continue;
+        }
+        let (a, b) = (halves(was), halves(now));
+        let (top, bottom) = (mix(a[0], b[0]), mix(a[1], b[1]));
+        f.set(
+            x,
+            y,
+            match was.filter(|c| !"▀▄█ ".contains(c.ch)) {
+                Some(g) if k < 0.5 => Some(Cell {
+                    fg: g.fg.lerp(bottom.or(top).unwrap_or(sc.rest), k * 2.0),
+                    bg: behind(top, bottom),
+                    ..g
+                }),
+                _ => encode(top, bottom),
+            },
+        );
+    }
+}
+
+/// The background of a symbol over pixels `top` and `bottom`: both, mixed
+/// (one cell has one), or none if either is empty, so it doesn't paint a
+/// block outside the glass.
+fn behind(top: Option<Rgb>, bottom: Option<Rgb>) -> Option<Rgb> {
+    Some(top?.lerp(bottom?, 0.5))
+}
+
+/// A cell's index in the canvas, and where it is on screen.
+type CellAt = (usize, (i32, i32));
+
+/// Each slot of `nx` with its cells, row by row: index in the canvas, and
+/// where on screen.
+fn slot_cells<'a>(sc: &'a Scene, nx: &'a Layout) -> impl Iterator<Item = (&'a Slot, Vec<CellAt>)> + 'a {
+    nx.slots.iter().map(move |slot| {
+        let first = (nx.dy + slot.y) * sc.tw() + nx.dx + slot.x;
+        let cells = (0..nx.rows * slot.w)
+            .map(|k| {
+                let i = k / slot.w * sc.tw() + first + k % slot.w;
+                (i, sc.pos(i))
+            })
+            .collect();
+        (slot, cells)
+    })
+}
+
+/// A cell's upper and lower pixel (`None`: nothing drawn there).
+fn halves(c: Option<Cell>) -> [Option<Rgb>; 2] {
+    match c {
+        None => [None, None],
+        Some(c) => match c.ch {
+            '▀' => [Some(c.fg), c.bg],
+            '▄' => [c.bg, Some(c.fg)],
+            '█' => [Some(c.fg); 2],
+            _ => [c.bg; 2],
+        },
+    }
+}
+
+/// A cell showing pixels `top` and `bottom`.
+fn encode(top: Option<Rgb>, bottom: Option<Rgb>) -> Option<Cell> {
+    match (top, bottom) {
+        (Some(t), b) => Some(Cell {
+            ch: '▀', fg: t, bg: b
+        }),
+        (None, Some(b)) => Some(Cell {
+            ch: '▄',
+            fg: b,
+            bg: None,
+        }),
+        (None, None) => None,
+    }
+}
+
+/// What an effect drew over a tube's cells (row by row, `w` wide), as
+/// pixels: what shows without it, its wire pixels, their light (linear) and
+/// how much of each pixel they cover, and its other characters (symbols).
+struct Played {
+    shown: Vec<Option<Rgb>>,
+    wire: Vec<Option<Rgb>>,
+    light: Vec<[f32; 3]>,
+    cover: Vec<[f32; 1]>,
+    glyphs: Vec<Option<Cell>>,
+}
+
+/// The pixels of cell `k` of a slot `w` cells wide, in rows of pixels.
+fn pixels_at(k: usize, w: usize) -> [usize; 2] {
+    let (row, col) = (k / w, k % w);
+    [2 * row * w + col, (2 * row + 1) * w + col]
+}
+
+/// What an effect drew over `cells` (`base`: them before it), `None` if it
+/// lit nothing there.
+fn played(cells: &[CellAt], w: usize, base: &Frame, f: &Frame) -> Option<Played> {
+    let n = cells.len() * 2;
+    let mut p = Played {
+        shown: vec![None; n],
+        wire: vec![None; n],
+        light: vec![[0.0; 3]; n],
+        cover: vec![[0.0]; n],
+        glyphs: vec![None; cells.len()],
+    };
+    let mut lit = false;
+    for (k, &(_, (x, y))) in cells.iter().enumerate() {
+        let at = pixels_at(k, w);
+        let was = base.get(x, y);
+        [p.shown[at[0]], p.shown[at[1]]] = halves(was);
+        let Some(cell) = f.get(x, y).filter(|&c| Some(c) != was) else {
+            continue;
+        };
+        let on = match cell.ch {
+            '▀' => [1.0, 0.0],
+            '▄' => [0.0, 1.0],
+            '█' => [1.0, 1.0],
+            ' ' => [0.0, 0.0],
+            _ => {
+                p.glyphs[k] = Some(cell);
+                [0.35, 0.35]
+            }
+        };
+        for (j, on) in at.into_iter().zip(on) {
+            if on > 0.0 {
+                lit = true;
+                if on >= 1.0 {
+                    p.wire[j] = Some(cell.fg);
+                }
+                let Rgb(r, g, b) = cell.fg;
+                p.light[j] = [r, g, b].map(|v| to_linear(f32::from(v)) * on);
+                p.cover[j] = [on];
+            }
+        }
+    }
+    lit.then_some(p)
+}
+
+/// Which of `cells` an effect has put in place, in about their color: they
+/// show as at rest, so it ends on the tubes' own wires, not its blocks.
+fn settled_cells(sc: &Scene, cells: &[CellAt], f: &Frame) -> Vec<bool> {
+    let near = |a: Rgb, b: Rgb| a.0.abs_diff(b.0) <= 6 && a.1.abs_diff(b.1) <= 6 && a.2.abs_diff(b.2) <= 6;
+    cells
+        .iter()
+        .map(|&(i, (x, y))| match (f.get(x, y), sc.settled(i)) {
+            (Some(a), Some(b)) => a.ch == b.ch && near(a.fg, b.fg),
+            _ => false,
+        })
+        .collect()
+}
+
+/// What an effect lights in the tubes: their settled cells drawn as at rest
+/// (`settled_cells`), and the glass lit by the rest of what it drew
+/// (`light`). Not separators (no glass), octant tubes (no glow) or on a
+/// light background.
+fn bloom(sc: &Scene, nx: &Layout, base: &Frame, rest: &Frame, f: &mut Frame) {
+    let glowing = nx.style.effect_glow && nx.field.m == 1 && !is_light(sc.rest);
+    for (slot, cells) in slot_cells(sc, nx) {
+        let settled = settled_cells(sc, &cells, f);
+        if glowing
+            && matches!(slot.lamp, Lamp::Tube { .. } | Lamp::Blank)
+            && let Some(p) = played(&cells, slot.w, base, f)
+        {
+            light(sc, nx, slot, &cells, &p, f);
+        }
+        for (&(_, (x, y)), _) in cells.iter().zip(&settled).filter(|(_, s)| **s) {
+            f.set(x, y, rest.get(x, y));
+        }
+    }
+}
+
+/// Light tube `slot` (its `cells`) with what an effect drew over it, like
+/// its glow at rest: blurred like the glow and added in linear light onto
+/// the glass, and on the rim and reflection streak as `glass_shade` does.
+/// Half blocks are wire pixels in their own color; other characters (an
+/// effect's symbols) stay, and light the tube a little.
+fn light(sc: &Scene, nx: &Layout, slot: &Slot, cells: &[CellAt], p: &Played, f: &mut Frame) {
+    let (field, style) = (&nx.field, &nx.style);
+    let (w, h, px) = (slot.w, nx.rows * 2, 1.0 / field.s);
+    let lamp = style.lamp(sc.pulse);
+    // As the glow at rest: its color is the wire's at 0.55, in linear light.
+    let strength = lamp * 0.55_f32.powf(2.4);
+    let glow = halo(&p.light, w, h, field.s, GLOW_R);
+    // On the rim by how near light is (its `near` at rest), and on the
+    // streak by how much the tube gives (its lit symbol's wire is all of
+    // it), in the color of the light.
+    let near = if style.glass {
+        halo(&p.cover, w, h, field.s, NEAR_R)
+    } else {
+        vec![]
+    };
+    let total: f32 = p.cover.iter().map(|[c]| c).sum();
+    let given = match slot.lamp {
+        Lamp::Tube { group, k, .. } => {
+            let k = usize::from(k);
+            (total / field.cathodes(group).shade.iter().map(|s| s.core[k]).sum::<f32>()).min(1.0)
+        }
+        _ => 0.0,
+    };
+    let shine = {
+        let sum = p
+            .light
+            .iter()
+            .fold([0.0; 3], |a, l| [a[0] + l[0], a[1] + l[1], a[2] + l[2]]);
+        let e = to_rgb(sum.map(|v| from_linear(v / total)));
+        e.lerp(e.scale(0.55), 0.4)
+    };
+    let pixel = |j: usize| {
+        if p.wire[j].is_some() {
+            return p.wire[j];
+        }
+        let at = (j / w) * field.w + j % w;
+        // Glow stays inside the glass, fading towards the tube's edges.
+        if style.glass && field.glass[at] > px {
+            return p.shown[j];
+        }
+        let mut before = p.shown[j].unwrap_or(sc.rest);
+        if style.glass {
+            let rim = cover(field.glass[at].abs(), (px * 0.9).max(0.025), px);
+            let k = lamp * (rim * near[j][0].min(1.0) * 1.6 + field.streak[at] * 0.35 * given);
+            before = before.lerp(shine, k.min(1.0));
+        }
+        let k = strength * field.edge[at];
+        // Too faint to show (well under a level).
+        if glow[j].iter().all(|&g| g * k < 1e-5) {
+            return p.shown[j].map(|_| before);
+        }
+        let add = |v: u8, c: usize| from_linear(to_linear(f32::from(v)) + glow[j][c] * k);
+        let col = [add(before.0, 0), add(before.1, 1), add(before.2, 2)];
+        let was = [f32::from(before.0), f32::from(before.1), f32::from(before.2)];
+        (p.shown[j].is_some() || glowed(col, was)).then(|| to_rgb(col))
+    };
+    for (k, &(_, (x, y))) in cells.iter().enumerate() {
+        let [top, bottom] = pixels_at(k, w).map(pixel);
+        f.set(
+            x,
+            y,
+            match p.glyphs[k] {
+                // A symbol keeps its own look, on the lit glass.
+                Some(g) => Some(Cell {
+                    bg: behind(top, bottom),
+                    ..g
+                }),
+                None => encode(top, bottom),
+            },
+        );
+    }
+}
+
 /// Brightness of slot `n` with --flicker. Like a real tube it's mostly
 /// steady: now and then (about every 20 s per tube) a short burst of one to
 /// three quick dips, 60 ms each. Steady frames are drawn from the cache.
@@ -1280,7 +1641,7 @@ pub fn draw(sc: &Scene, nx: &Layout, f: &mut Frame, lit: bool) {
 fn draw_lamps(sc: &Scene, nx: &Layout, f: &mut Frame, colon_lit: bool, on: impl Fn(usize, &Slot) -> Lit) {
     let field = &nx.field;
     let style = &nx.style;
-    let glow = style.glow * 1.4 * sc.glow_k * (1.0 + 2.0 * sc.pulse);
+    let glow = style.lamp(sc.pulse);
     let colon_lit = colon_lit && !(style.blink && sc.blink_dark);
     // A tube's cells only change when what's lit, its colors or the
     // background do: reuse them otherwise. Not with drifting colors.
@@ -1315,7 +1676,9 @@ fn draw_lamps(sc: &Scene, nx: &Layout, f: &mut Frame, colon_lit: bool, on: impl 
                 f.set(x, y, cell);
             }
         };
-        let at = cache.iter().position(|(at, _)| *at == (nx.dy, n));
+        // Lit and unlit (under an effect, drawn each frame then) apart.
+        let place = (nx.dy, n, colon_lit || on.iter().any(|&v| v > 0.0));
+        let at = cache.iter().position(|(at, _)| *at == place);
         if let Some((_, (_, cells))) = at.map(|i| &cache[i]).filter(|(_, (k, _))| cached && *k == key) {
             put(f, cells);
             continue;
@@ -1340,7 +1703,7 @@ fn draw_lamps(sc: &Scene, nx: &Layout, f: &mut Frame, colon_lit: bool, on: impl 
         if cached {
             match at {
                 Some(i) => cache[i].1 = (key, cells),
-                None => cache.push(((nx.dy, n), (key, cells))),
+                None => cache.push((place, (key, cells))),
             }
         }
     }
@@ -1494,6 +1857,9 @@ fn octant(mut bits: usize) -> char {
     OCTANTS[bits]
 }
 
+/// Where a cached tube is: the layout's row, the slot, and whether it's lit.
+type Place = (usize, usize, bool);
+
 /// A tube's cells and what they were drawn from.
 type Drawn = (SlotKey, Vec<Option<Cell>>);
 
@@ -1601,8 +1967,7 @@ impl Scene<'_> {
         // The alert pulse (with this font, the tubes flare instead of the background).
         let k = self.brightness() * flicker * (1.0 + 0.5 * self.pulse);
         let wire = base.scale(k);
-        let Rgb(r, g, b) = self.rest;
-        let light = f32::from(r) * 0.3 + f32::from(g) * 0.6 + f32::from(b) * 0.1 > 128.0;
+        let light = is_light(self.rest);
         Colors {
             wire,
             // A white-hot core would vanish on a light background: deepen it instead.
@@ -1622,7 +1987,14 @@ impl Scene<'_> {
         }
     }
 
-    /// The color of lit wire at cell `i` (also what effects play the wires in).
+    /// A fully lit wire pixel at cell `i`, as `tube_pixel` draws it: what
+    /// effects play the wires in and end on.
+    pub fn lit_wire_color(&self, i: usize) -> Rgb {
+        let c = self.nixie_colors(i, 1.0);
+        c.wire.lerp(c.hot, 0.7)
+    }
+
+    /// The color of lit wire at cell `i` (also the tubes' color in other fonts).
     pub fn wire_color(&self, i: usize) -> Rgb {
         self.wire_base(i).scale(self.brightness())
     }
@@ -1645,6 +2017,7 @@ impl Scene<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
 
     fn digit(k: u8, comma: bool) -> Lamp {
         Lamp::Tube {
@@ -1819,7 +2192,7 @@ mod tests {
             tick_fx: false,
             urgency: 0.0,
             rest: themes[0].bg,
-            glow_k: 1.0,
+            rest_k: 1.0,
             blink_dark: false,
             pulse: 0.0,
         };
@@ -1887,17 +2260,111 @@ mod tests {
     }
 
     #[test]
+    fn an_effect_ends_close_to_the_tubes_at_rest() {
+        let themes = crate::theme::builtin();
+        let mut target = crate::scene::Target::empty();
+        target.update(
+            glyphs("24:59", 118, 32, Style::default(), false).expect("fits"),
+            0.0,
+            usize::MAX,
+        );
+        let mut sc = Scene {
+            t: &target,
+            ox: 1,
+            oy: 1,
+            sw: 120,
+            sh: 36,
+            theme: &themes[0],
+            now: 10.0,
+            paused: false,
+            done: false,
+            tick_fx: true,
+            urgency: 0.0,
+            rest: themes[0].bg,
+            rest_k: 1.0,
+            blink_dark: false,
+            pulse: 0.0,
+        };
+        let frame = |draw: &dyn Fn(&mut Frame)| {
+            let mut f = Frame::new(120, 36);
+            draw(&mut f);
+            f
+        };
+        let rest = frame(&|f| sc.draw_settled(f));
+        // How effects end: the settled wires over the unlit tubes, lit by them or not.
+        let lit = frame(&|f| {
+            under_effect(&sc, f, |f| sc.draw_cells(f, 0));
+        });
+        let unlit = frame(&|f| {
+            draw(&sc, target.nixie.as_ref().unwrap(), f, false);
+            sc.draw_cells(f, 0);
+        });
+        // Off the wires (a grid of blocks in effects, smooth at rest; the
+        // crossfade takes those over), the light on the glass matches.
+        let wires = frame(&|f| sc.draw_cells(f, 0));
+        let lum = |c: Option<Rgb>| c.map_or(0.0, |Rgb(r, g, b)| f32::from(r) + f32::from(g) + f32::from(b));
+        let off = |a: &Frame| -> f32 {
+            let (mut sum, mut n) = (0.0, 0.0);
+            for y in 0..36 {
+                for x in 0..120 {
+                    let pixels = halves(a.get(x, y)).into_iter().zip(halves(rest.get(x, y)));
+                    for ((p, q), w) in pixels.zip(halves(wires.get(x, y))) {
+                        if w.is_none() && lum(q) > 30.0 {
+                            sum += lum(p) - lum(q);
+                            n += 1.0;
+                        }
+                    }
+                }
+            }
+            sum / n
+        };
+        assert!(off(&lit).abs() < 3.0, "{} levels off", off(&lit));
+        assert!(off(&unlit) < -10.0, "unlit only {} darker", off(&unlit));
+        // With --no-effect-glow, effects leave the glass unlit.
+        let mut plain = crate::scene::Target::empty();
+        let style = Style {
+            effect_glow: false,
+            ..Style::default()
+        };
+        plain.update(glyphs("24:59", 118, 32, style, false).expect("fits"), 0.0, usize::MAX);
+        let plain_sc = Scene { t: &plain, ..sc };
+        let dark = frame(&|f| {
+            under_effect(&plain_sc, f, |f| plain_sc.draw_cells(f, 0));
+        });
+        assert!(off(&dark) < -10.0, "glass lit by {} without effect glow", off(&dark));
+        // The crossfade after an effect starts from its last frame, symbols
+        // and all (one cut short in the middle, say).
+        let mut fx = crate::effects::make(
+            crate::effects::Kind::Decrypt,
+            &sc,
+            &mut rand::rngs::StdRng::seed_from_u64(1),
+        );
+        let mut last = Frame::new(120, 36);
+        under_effect(&sc, &mut last, |f| fx.draw(&sc, 0.8, f));
+        assert!(
+            last.chars().chars().any(|c| !"▀▄█ ".contains(c)),
+            "decrypt shows symbols then"
+        );
+        sc.rest_k = 0.0;
+        let start = frame(&|f| {
+            sc.draw_settled(f);
+            crossfade(&sc, &last, f);
+        });
+        assert!(start == last, "the crossfade starts where the effect ended");
+    }
+
+    #[test]
     fn glow_falls_off_like_light_from_a_wire() {
         // A straight wire, 40 pixels down the middle of a 41 x 60 field.
         let (w, h, s) = (41, 60, 30.0);
-        let mut core = vec![0.0; w * h];
+        let mut core = vec![[0.0]; w * h];
         for y in 10..50 {
             for x in 0..w {
-                core[y * w + x] = cover(x.abs_diff(20) as f32 / s, STROKE, 1.0 / s);
+                core[y * w + x] = [cover(x.abs_diff(20) as f32 / s, STROKE, 1.0 / s)];
             }
         }
-        let g = halo(&core, w, h, s);
-        let at = |x: usize, y: usize| g[y * w + x];
+        let g = halo(&core, w, h, s, GLOW_R);
+        let at = |x: usize, y: usize| g[y * w + x][0];
         assert!((at(20, 30) - 1.0).abs() < 0.05, "middle {}", at(20, 30));
         // Like exp(-d / GLOW_R) beside it...
         let px = (2.0 * GLOW_R * s).round() as usize;
@@ -1988,7 +2455,7 @@ mod tests {
             tick_fx: true,
             urgency: 0.0,
             rest: themes[0].bg,
-            glow_k: 1.0,
+            rest_k: 1.0,
             blink_dark: false,
             pulse: 0.0,
         };
@@ -2040,7 +2507,7 @@ mod tests {
                 tick_fx: true,
                 urgency: 0.0,
                 rest,
-                glow_k: 1.0,
+                rest_k: 1.0,
                 blink_dark: false,
                 pulse: 0.0,
             };
@@ -2110,7 +2577,7 @@ mod tests {
                 tick_fx: true,
                 urgency: 0.6,
                 rest: themes[0].bg,
-                glow_k: 1.0,
+                rest_k: 1.0,
                 blink_dark: false,
                 pulse,
             };

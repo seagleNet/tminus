@@ -99,8 +99,9 @@ pub struct Scene<'a> {
     /// What the nixie tubes' pixels blend over: the frame's fill, else the
     /// terminal's background.
     pub rest: Rgb,
-    /// 0..1: how far the nixie glow is back after an effect.
-    pub glow_k: f32,
+    /// 0..1: how far the nixie tubes are back at rest after an effect, from
+    /// how it ended (`nixie::crossfade`).
+    pub rest_k: f32,
     /// Whether the nixie separator is dark now, with --blink (even seconds).
     pub blink_dark: bool,
     /// 0..1: the alert pulse on each tick in the final seconds and after zero,
@@ -180,10 +181,16 @@ impl Scene<'_> {
         let age = self.now - self.t.changed[i];
         if self.t.nixie.is_some() {
             // Nixie wires, fading over (see `nixie::draw`) rather than
-            // scrambling, and a plain title under them in the same color.
+            // scrambling, in the color they're lit in (so effects end on it),
+            // and a plain title under them in the tubes' color.
+            let wire = self.rc(i).0 < self.t.title_row || self.t.nixie_title.is_some();
             return (ch != ' ').then(|| Cell {
                 ch,
-                fg: self.wire_color(i),
+                fg: if wire {
+                    self.lit_wire_color(i)
+                } else {
+                    self.wire_color(i)
+                },
                 bg: None,
             });
         }
@@ -238,7 +245,8 @@ impl Scene<'_> {
         }
     }
 
-    fn draw_cells(&self, f: &mut Frame, from: usize) {
+    /// The settled cells from index `from` on (for nixie tubes: their wires).
+    pub fn draw_cells(&self, f: &mut Frame, from: usize) {
         for i in from..self.len() {
             if let Some(c) = self.settled(i) {
                 let (x, y) = self.pos(i);
