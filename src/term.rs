@@ -144,8 +144,35 @@ pub enum Input {
     HungUp,
 }
 
+/// Passes writes on, counting the bytes (for the debug panel).
+struct Counted<W> {
+    inner: W,
+    bytes: u64,
+}
+
+impl<W: Write> Write for Counted<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.bytes += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// What the last `present` wrote.
+#[derive(Clone, Copy, Default)]
+pub struct Presented {
+    /// Cells rewritten.
+    pub cells: usize,
+    /// The whole screen was repainted.
+    pub full: bool,
+}
+
 pub struct Term {
-    out: BufWriter<Stdout>,
+    out: BufWriter<Counted<Stdout>>,
     /// Our own handle on the terminal, used to wait for input and to notice
     /// hangups without going through crossterm's reader (see `wait_input`).
     #[cfg(unix)]
@@ -157,11 +184,19 @@ pub struct Term {
     /// Clearing fills with the current background color (terminfo `bce`),
     /// so a background fill needn't print every blank cell.
     bce: bool,
+    /// What the last `present` wrote.
+    pub presented: Presented,
 }
 
 impl Term {
     pub fn enter() -> io::Result<Self> {
-        let mut out = BufWriter::with_capacity(1 << 16, io::stdout());
+        let mut out = BufWriter::with_capacity(
+            1 << 16,
+            Counted {
+                inner: io::stdout(),
+                bytes: 0,
+            },
+        );
         terminal::enable_raw_mode()?;
         execute!(
             out,
@@ -188,6 +223,7 @@ impl Term {
             tty,
             background,
             bce: back_color_erase(),
+            presented: Presented::default(),
         })
     }
 
@@ -195,6 +231,16 @@ impl Term {
     /// "no fill" should end on this, or they visibly jump at the last frame.
     pub fn background(&self) -> Option<Rgb> {
         self.background
+    }
+
+    /// Whether clearing paints with the background color (terminfo `bce`).
+    pub fn bce(&self) -> bool {
+        self.bce
+    }
+
+    /// Bytes written to the terminal so far (flushed ones).
+    pub fn written(&self) -> u64 {
+        self.out.get_ref().bytes
     }
 
     /// Force a full repaint on the next `present` (e.g. after a resize).
@@ -272,6 +318,7 @@ impl Term {
             }
         }
         let shown = self.shown.as_mut().expect("set above when missing");
+        let mut cells = 0;
         let mut cur: Option<(i32, i32)> = None;
         let mut color: Option<Rgb> = None;
         // The background in effect: `Some(None)` is the terminal's default.
@@ -300,6 +347,7 @@ impl Term {
                 if new.is_some_and(|c| c.ch == WIDE_TAIL) {
                     continue;
                 }
+                cells += 1;
                 if cur != Some((x, y)) {
                     queue!(self.out, cursor::MoveTo(x as u16, y as u16))?;
                 }
@@ -326,6 +374,7 @@ impl Term {
             }
         }
         queue!(self.out, terminal::EndSynchronizedUpdate)?;
+        self.presented = Presented { cells, full };
         self.out.flush()
     }
 }

@@ -29,6 +29,7 @@ MSRV job; it must stay green. `release.yml` runs on `v*` tags.
 - `config.rs`: `~/.config/tminus/config.toml` turned into CLI args (plus `[themes.*]`, `[presets]`)
 - `control.rs`: Unix-socket remote control (`t- ctl status [--follow]`, `t- ctl list`, `t- ctl attach [--take]`, `t- ctl <command>`)
 - `effects/`: `mod.rs` (Kind enum, pools, `make`, `max_duration`, `measure`, shared helpers), `motion.rs` (effects where characters travel, many through `Travel`) and `light.rs` (effects in place); all ported from TerminalTextEffects
+- `debug.rs`: the debug panel's numbers (`d`): per-frame samples from `run` (draw/present time, bytes via `Term::written`, cells), CPU (`getrusage`), memory, key latency, tube cache hits (`nixie::cache_counts`); summed over 1s, refreshed 4x/s
 - `scene.rs` (clock canvas and settled look), `term.rs` (frame buffer and diffing presenter), `font.rs`, `theme.rs`, `util.rs`
 - `nixie.rs`: `--font nixie` (wire digits after the IN-8-2, glass, unlit cathodes, glow; `Style` from the nixie options)
 

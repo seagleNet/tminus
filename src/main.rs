@@ -3,6 +3,7 @@ mod cli;
 mod clock;
 mod config;
 mod control;
+mod debug;
 mod effects;
 mod font;
 mod nixie;
@@ -531,8 +532,11 @@ fn run(cli: &Cli, app: &mut App, mut server: Option<Server>) -> std::io::Result<
     app.resize(w, h);
     // A viewer (`t- ctl attach`) keeps in step with the timer it shows.
     let mut synced_at: Option<Instant> = None;
+    app.stats.bce = term.bce();
 
     loop {
+        // When input was read this frame, for the debug panel's latency.
+        let mut key_at: Option<Instant> = None;
         let tick = Instant::now();
         let now = epoch.elapsed().as_secs_f64();
         if signalled.load(Ordering::Relaxed) {
@@ -545,6 +549,7 @@ fn run(cli: &Cli, app: &mut App, mut server: Option<Server>) -> std::io::Result<
             Input::HungUp => return Ok(app.completed()),
             Input::None => {}
             Input::Ready => {
+                key_at = Some(Instant::now());
                 for _ in 0..MAX_EVENTS_PER_FRAME {
                     if !event::poll(Duration::ZERO)? {
                         break;
@@ -594,8 +599,22 @@ fn run(cli: &Cli, app: &mut App, mut server: Option<Server>) -> std::io::Result<
             }
         }
 
+        let (drawing, written) = (Instant::now(), term.written());
         app.draw(now, &mut rng);
+        let presenting = Instant::now();
         term.present(&app.frame)?;
+        let at = Instant::now();
+        app.stats.record(debug::Sample {
+            at,
+            draw: presenting - drawing,
+            present: at - presenting,
+            bytes: term.written() - written,
+            cells: term.presented.cells,
+            full: term.presented.full,
+        });
+        if let Some(k) = key_at {
+            app.stats.key_latency = Some(at - k);
+        }
 
         let budget = if app.animating(now) {
             frame_dur

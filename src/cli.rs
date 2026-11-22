@@ -22,6 +22,7 @@ pub const KEYS: &[(&str, &str)] = &[
     ("+ / -", "add / remove one minute"),
     ("r", "restart (the current segment)"),
     ("h / ?", "show / hide this list of keys (q and esc close it too)"),
+    ("d", "show / hide the debug panel (fps, timings, output, cpu, memory)"),
     ("q / esc", "quit"),
 ];
 
@@ -35,6 +36,7 @@ pub const DEMO_KEYS: &[(&str, &str)] = &[
     ("r", "random effect"),
     ("s", "switch title between large and small"),
     ("h / ?", "show / hide this list of keys (q and esc close it too)"),
+    ("d", "show / hide the debug panel"),
     ("q / esc", "quit, printing the chosen --theme and --effect"),
 ];
 
@@ -123,6 +125,7 @@ KEYS:
   + / -        add / remove one minute
   r            restart (the current segment)
   h / ?        show / hide this list of keys (q and esc close it too)
+  d            show / hide the debug panel (fps, timings, output, cpu, memory)
   q / esc      quit (exit code 1 if the timer hadn't finished)
 
 REMOTE CONTROL: running timers can be listed, watched and steered from elsewhere,

@@ -91,6 +91,7 @@ t- 25m --exit && notify-send "break time"
 | `+` / `-` | add / remove one minute |
 | `r` | restart (the current segment) |
 | `h` / `?` | show / hide the keys popup |
+| `d` | show / hide the debug panel (fps, draw/present times, output, CPU, memory, key latency, tube cache) |
 | `q` / `esc` | quit |
 
 `t- --help` lists every option. **Exit codes:** `0` the countdown finished, `1`

@@ -1695,6 +1695,16 @@ pub fn draw(sc: &Scene, nx: &Layout, f: &mut Frame, lit: bool) {
     });
 }
 
+thread_local! {
+    // Tubes taken from the cache, and drawn (for the debug panel).
+    static CACHE_COUNTS: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// Tubes taken from the cache so far, and tubes drawn.
+pub fn cache_counts() -> (u64, u64) {
+    CACHE_COUNTS.get()
+}
+
 /// Draw the tubes with the cathodes `on(slot index, slot)` lights; colons
 /// light with `colon_lit`.
 fn draw_lamps(sc: &Scene, nx: &Layout, f: &mut Frame, colon_lit: bool, on: impl Fn(usize, &Slot) -> Lit) {
@@ -1740,8 +1750,10 @@ fn draw_lamps(sc: &Scene, nx: &Layout, f: &mut Frame, colon_lit: bool, on: impl 
         let at = cache.iter().position(|(at, _)| *at == place);
         if let Some((_, (_, cells))) = at.map(|i| &cache[i]).filter(|(_, (k, _))| cached && *k == key) {
             put(f, cells);
+            CACHE_COUNTS.set((CACHE_COUNTS.get().0 + 1, CACHE_COUNTS.get().1));
             continue;
         }
+        CACHE_COUNTS.set((CACHE_COUNTS.get().0, CACHE_COUNTS.get().1 + 1));
         let cath = group.map(|g| field.cathodes(g));
         let cells = if field.m == 2 {
             fine_cells(nx, slot, cath.as_deref(), &on, colon_lit, key.colors)

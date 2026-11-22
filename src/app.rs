@@ -96,16 +96,20 @@ impl Demo {
 
     /// The effect's CLI name.
     fn name(&self) -> String {
-        use clap::ValueEnum;
-        self.kind()
-            .to_possible_value()
-            .map(|v| v.get_name().to_string())
-            .unwrap_or_default()
+        kind_name(self.kind())
     }
 
     fn step(&mut self, forward: bool) {
         self.pick = cycle(self.pick, self.kinds.len(), forward);
     }
+}
+
+/// An effect's CLI name (`beams`, `orbittingvolley`, ...).
+fn kind_name(kind: effects::Kind) -> String {
+    use clap::ValueEnum;
+    kind.to_possible_value()
+        .map(|v| v.get_name().to_string())
+        .unwrap_or_default()
 }
 
 /// One step from `i` around a list of `len`, either way.
@@ -207,6 +211,8 @@ pub struct App<'a> {
     status_time: StatusTime,
     /// Whether the keybinding popup is open.
     help: bool,
+    /// The debug panel: whether it's open, and what it shows (filled by the TUI loop).
+    pub stats: crate::debug::Stats,
     /// Set in `--demo` mode.
     demo: Option<Demo>,
     /// When the last effect ended, and its last frame: nixie tubes cross
@@ -247,6 +253,7 @@ impl<'a> App<'a> {
             title_large: cli.title_size == TitleSize::Large,
             status_time: cli.status_time,
             help: false,
+            stats: crate::debug::Stats::default(),
             demo,
             fx_end: (f64::NEG_INFINITY, Frame::new(0, 0)),
             viewing: false,
@@ -379,6 +386,7 @@ impl<'a> App<'a> {
         match code {
             KeyCode::Char('c') if mods.contains(KeyModifiers::CONTROL) => return true,
             KeyCode::Char('h' | '?') => self.help = !self.help,
+            KeyCode::Char('d' | 'D') => self.stats.toggle(),
             // q and Esc close the popup first; with no popup they quit.
             KeyCode::Char('q') | KeyCode::Esc if self.help => self.help = false,
             KeyCode::Char('q') | KeyCode::Esc => return true,
@@ -1022,9 +1030,7 @@ impl<'a> App<'a> {
         self.frame.bg = bg;
         self.draw_footer(now, oy + th + 1, ox, tw);
         self.draw_demo_bar();
-        if self.help {
-            self.draw_help();
-        }
+        self.draw_popups(now);
     }
 
     /// When the next periodic effect is due.
@@ -1218,21 +1224,20 @@ impl<'a> App<'a> {
         }
     }
 
-    /// The keybinding popup: a bordered box centered on the screen, drawn over
-    /// whatever is underneath (its blank interior hides the clock behind it).
-    fn draw_help(&mut self) {
-        let theme = &self.themes[self.theme];
-        let keys = self.keys();
-        let key_w = keys.iter().map(|(k, _)| str_width(k)).max().unwrap_or(0);
-        let desc_w = keys.iter().map(|(_, d)| str_width(d)).max().unwrap_or(0);
-        // Border + 2 padding on each side, 3 between columns; title row + gap + keys.
-        let (w, h) = (key_w + desc_w + 3 + 6, keys.len() as i32 + 4);
-        if w > self.frame.w || h > self.frame.h {
-            self.draw_help_compact(key_w);
-            return;
+    /// The popups, over everything else: the debug panel, then the keys.
+    fn draw_popups(&mut self, now: f64) {
+        if self.stats.shown() {
+            self.draw_debug(now);
         }
-        let (x0, y0) = ((self.frame.w - w) / 2, (self.frame.h - h) / 2);
-        let border = theme.dim;
+        if self.help {
+            self.draw_help();
+        }
+    }
+
+    /// A bordered box with a blank interior that hides what's behind it, and
+    /// its title on the top edge (`x`: where, from the box's left).
+    fn draw_box(&mut self, (x0, y0, w, h): (i32, i32, i32, i32), title: &str, title_x: i32) {
+        let theme = &self.themes[self.theme];
         for y in y0..y0 + h {
             for x in x0..x0 + w {
                 let ch = match (x - x0, y - y0) {
@@ -1248,11 +1253,28 @@ impl<'a> App<'a> {
                 };
                 // `put` keeps a background (nixie tubes); the popup covers it.
                 self.frame.set(x, y, None);
-                self.frame.put(x, y, ch, border);
+                self.frame.put(x, y, ch, theme.dim);
             }
         }
+        self.frame.text(x0 + title_x, y0, title, theme.flash);
+    }
+
+    /// The keybinding popup: a bordered box centered on the screen, drawn over
+    /// whatever is underneath (its blank interior hides the clock behind it).
+    fn draw_help(&mut self) {
+        let keys = self.keys();
+        let key_w = keys.iter().map(|(k, _)| str_width(k)).max().unwrap_or(0);
+        let desc_w = keys.iter().map(|(_, d)| str_width(d)).max().unwrap_or(0);
+        // Border + 2 padding on each side, 3 between columns; title row + gap + keys.
+        let (w, h) = (key_w + desc_w + 3 + 6, keys.len() as i32 + 4);
+        if w > self.frame.w || h > self.frame.h {
+            self.draw_help_compact(key_w);
+            return;
+        }
+        let (x0, y0) = ((self.frame.w - w) / 2, (self.frame.h - h) / 2);
         let title = " keys ";
-        self.frame.text(x0 + (w - str_width(title)) / 2, y0, title, theme.flash);
+        self.draw_box((x0, y0, w, h), title, (w - str_width(title)) / 2);
+        let theme = &self.themes[self.theme];
         for (i, (key, desc)) in keys.iter().enumerate() {
             let y = y0 + 2 + i as i32;
             let col = theme.gradient_at(i as f32 / keys.len() as f32 * 0.5);
@@ -1260,6 +1282,100 @@ impl<'a> App<'a> {
             self.frame
                 .text(x0 + 3 + key_w + 3, y, desc, theme.flash.lerp(theme.dim, 0.35));
         }
+    }
+
+    /// The debug panel (`d`): frame rate, timings, output, CPU, memory,
+    /// latency and caches, in a box in the top left corner.
+    fn draw_debug(&mut self, now: f64) {
+        let rows = self.debug_rows(now);
+        let key_w = rows.iter().map(|(k, _)| str_width(k)).max().unwrap_or(0);
+        let val_w = rows
+            .iter()
+            .map(|(_, v)| str_width(v))
+            .fold(self.stats.value_w, i32::max);
+        self.stats.value_w = val_w;
+        // Border + 1 padding on each side, 2 between columns.
+        let (x0, y0) = (1, 0);
+        self.draw_box((x0, y0, key_w + val_w + 2 + 4, rows.len() as i32 + 2), " debug ", 2);
+        let theme = &self.themes[self.theme];
+        let (key_col, val_col) = (theme.gradient_at(0.0), theme.flash.lerp(theme.dim, 0.35));
+        for (i, (key, val)) in rows.iter().enumerate() {
+            let y = y0 + 1 + i as i32;
+            self.frame.text(x0 + 2, y, key, key_col);
+            self.frame.text(x0 + 2 + key_w + 2, y, val, val_col);
+        }
+    }
+
+    /// What the debug panel shows, row by row.
+    fn debug_rows(&mut self, now: f64) -> Vec<(&'static str, String)> {
+        use crate::debug::{bytes, ms};
+        let animating = self.animating(now);
+        let idle = (1.0 / crate::IDLE_FRAME.as_secs_f64()).round() as u32;
+        let (fps_max, fps_idle) = (self.cli.fps, self.cli.fps.min(idle));
+        let effect = match (&self.effect, self.last_effect) {
+            (Some((_, start)), Some(kind)) => {
+                format!("{} {:.1}s / {:.1}s", kind_name(kind), now - start, kind.max_duration())
+            }
+            _ if self.pending.is_some() => "waiting for its mark".to_string(),
+            _ if self.next_effect_at.is_finite() => {
+                format!("none, next in {:.1}s", (self.next_effect_at - now).max(0.0))
+            }
+            _ => "none".to_string(),
+        };
+        let tubes = self.target.nixie.is_some() || self.target.nixie_title.is_some();
+        let (sw, sh) = (self.frame.w, self.frame.h);
+        let bg = self.term_bg.map_or_else(
+            || "unknown".to_string(),
+            |Rgb(r, g, b)| format!("#{r:02x}{g:02x}{b:02x}"),
+        );
+        let screen = format!("{sw}x{sh}  bg {bg}{}", if self.stats.bce { "  bce" } else { "" });
+        let latency = self.stats.key_latency.map_or_else(|| "press a key".to_string(), ms);
+        let s = self.stats.summary();
+        let state = if animating { "animating" } else { "idle" };
+        let per_frame = if s.fps > 0.0 { s.bytes_per_s / s.fps } else { 0.0 };
+        let full = match s.full_repaints {
+            0 => String::new(),
+            n => format!("  ({n} full)"),
+        };
+        let mut rows = vec![
+            (
+                "fps",
+                format!("{:.1}  ({fps_max} max, {fps_idle} idle; {state})", s.fps),
+            ),
+            ("draw", format!("{} avg  {} max", ms(s.draw_avg), ms(s.draw_max))),
+            (
+                "present",
+                format!("{} avg  {} max", ms(s.present_avg), ms(s.present_max)),
+            ),
+            ("frame gap", format!("{} max", ms(s.gap_max))),
+            (
+                "output",
+                format!("{}/s  {}/frame", bytes(s.bytes_per_s), bytes(per_frame)),
+            ),
+            ("cells", format!("{:.0}/frame of {}{full}", s.cells_avg, sw * sh)),
+            (
+                "cpu",
+                s.cpu.map_or_else(|| "?".to_string(), |c| format!("{:.1}%", c * 100.0)),
+            ),
+            (
+                "memory",
+                s.memory.map_or_else(
+                    || "?".to_string(),
+                    |(b, peak)| format!("{}{}", bytes(b as f64), if peak { " (peak)" } else { "" }),
+                ),
+            ),
+            ("key → screen", latency),
+        ];
+        if tubes {
+            let cache = s.tubes.map_or_else(
+                || "idle".to_string(),
+                |(hit, drawn)| format!("{:.0}% hit  {drawn:.0} drawn/s", hit * 100.0),
+            );
+            rows.push(("tube cache", cache));
+        }
+        rows.push(("effect", effect));
+        rows.push(("screen", screen));
+        rows
     }
 
     /// Popup fallback for screens too small for the box: no border, keys kept
