@@ -17,7 +17,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -30,7 +30,7 @@ jobs:
     name: Minimum Rust version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Keep in sync with `rust-version` in Cargo.toml.
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
