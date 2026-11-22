@@ -636,6 +636,9 @@ pub struct Field {
     /// The cells each slot was last drawn as, and what from (see
     /// `draw_lamps`), by the layout's row, the slot and whether it's lit.
     cache: RefCell<Vec<(Place, Drawn)>>,
+    /// The cells each tube was last lit as under an effect, and what from
+    /// (see `light_cached`), by the layout's row and the tube's position.
+    lit: RefCell<Vec<Lighted>>,
 }
 
 /// A group's cathodes in one tube size.
@@ -695,6 +698,7 @@ impl Field {
             tip: with_tip,
             m,
             cache: RefCell::default(),
+            lit: RefCell::default(),
         }
     }
 
@@ -1505,8 +1509,8 @@ fn bloom(sc: &Scene, nx: &Layout, base: &Frame, rest: &Frame, f: &mut Frame) {
     let (seps, tubes): (Vec<_>, Vec<_>) = slot_cells(sc, nx).partition(|(slot, _)| slot.lamp == Lamp::Colon);
     for (slot, cells) in &tubes {
         let settled = settled_cells(sc, cells, f);
-        if glowing && let Some(p) = played(cells, slot.w, base, f) {
-            light(sc, nx, slot, cells, &p, f);
+        if glowing {
+            light_cached(sc, nx, slot, cells, base, f);
         }
         for (&(_, (x, y)), _) in cells.iter().zip(&settled).filter(|(_, s)| **s) {
             f.set(x, y, rest.get(x, y));
@@ -1579,6 +1583,60 @@ fn blend(a: Option<Rgb>, b: Option<Rgb>, k: f32, rest: Rgb) -> Option<Rgb> {
     let c = a.unwrap_or(rest).lerp(b.unwrap_or(rest), k);
     let shows = c.0.abs_diff(rest.0).max(c.1.abs_diff(rest.1)).max(c.2.abs_diff(rest.2)) > 2;
     ((a.is_some() && b.is_some()) || (a.or(b).is_some() && shows)).then_some(c)
+}
+
+/// A tube as last lit under an effect: where (the layout's row, and the
+/// tube's row and column in it), what from, and its cells.
+struct Lighted {
+    at: (usize, usize, usize),
+    key: LightKey,
+    cells: Vec<Option<Cell>>,
+}
+
+/// What a tube was lit from under an effect: the same key lights it the same.
+#[derive(PartialEq)]
+struct LightKey {
+    /// Each cell before the effect and as it drew it.
+    cells: Vec<(Option<Cell>, Option<Cell>)>,
+    lamp: f32,
+    rest: Rgb,
+    slot: Lamp,
+    glass: bool,
+}
+
+/// `light` the tube, unless it's lit from the same as last frame: then its
+/// cells from then (effects often leave tubes alone for a few frames).
+fn light_cached(sc: &Scene, nx: &Layout, slot: &Slot, cells: &[CellAt], base: &Frame, f: &mut Frame) {
+    let key = LightKey {
+        cells: cells.iter().map(|&(_, (x, y))| (base.get(x, y), f.get(x, y))).collect(),
+        lamp: nx.style.lamp(sc.pulse),
+        rest: sc.rest,
+        slot: slot.lamp,
+        glass: nx.style.glass,
+    };
+    let place = (nx.dy, slot.y, slot.x);
+    let mut cache = nx.field.lit.borrow_mut();
+    let at = cache.iter().position(|l| l.at == place);
+    if let Some(i) = at
+        && cache[i].key == key
+    {
+        for (&(_, (x, y)), &cell) in cells.iter().zip(&cache[i].cells) {
+            f.set(x, y, cell);
+        }
+        return;
+    }
+    if let Some(p) = played(cells, slot.w, base, f) {
+        light(sc, nx, slot, cells, &p, f);
+    }
+    let lit = Lighted {
+        at: place,
+        key,
+        cells: cells.iter().map(|&(_, (x, y))| f.get(x, y)).collect(),
+    };
+    match at {
+        Some(i) => cache[i] = lit,
+        None => cache.push(lit),
+    }
 }
 
 /// Light tube `slot` (its `cells`) with what an effect drew over it, like
