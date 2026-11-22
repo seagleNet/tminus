@@ -1255,9 +1255,12 @@ fn srgb_exact(v: f32) -> f32 {
         }
 }
 
-/// Whether `glow_onto` changed `col` from `before` enough to see.
+/// Whether `glow_onto` changed `col` from `before` enough to draw the pixel
+/// (outside glass, where it's otherwise empty). Not just visibly: in a
+/// transparent terminal a drawn pixel is an opaque patch of the background
+/// around a colon's dots or glass-less tubes, so the faint tail is left out.
 fn glowed(col: [f32; 3], before: [f32; 3]) -> bool {
-    col.iter().zip(before).any(|(a, b)| a - b > 2.0)
+    col.iter().zip(before).any(|(a, b)| a - b > 5.0)
 }
 
 /// Glass over a pixel `sd` from its outline (< 0 inside): a faint tint, the
