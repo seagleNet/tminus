@@ -253,13 +253,18 @@ fn main() -> ExitCode {
 }
 
 /// The effects to pick from at each moment. Intro and at-zero effects fall
-/// back to --effect when not given.
+/// back to --effect when not given; that defaults to all effects, or with
+/// nixie tubes to their own `slotmachine`.
 fn effect_pools(cli: &Cli) -> effects::Pools {
-    let pool_or_default =
-        |chosen: &[effects::Kind]| effects::pool(if chosen.is_empty() { &cli.effect } else { chosen });
+    let effect: &[effects::Kind] = if cli.effect.is_empty() && cli.font == crate::font::FontKind::Nixie {
+        &[effects::Kind::Slotmachine]
+    } else {
+        &cli.effect
+    };
+    let pool_or_default = |chosen: &[effects::Kind]| effects::pool(if chosen.is_empty() { effect } else { chosen });
     effects::Pools {
         intro: pool_or_default(&cli.intro_effect),
-        replay: effects::pool(&cli.effect),
+        replay: effects::pool(effect),
         zero: pool_or_default(&cli.zero_effect),
     }
 }
@@ -654,6 +659,32 @@ mod tests {
         assert_eq!(hint(&["ctl", "status"]), None);
         assert_eq!(hint(&["help"]), None);
         assert_eq!(hint(&[]), None);
+    }
+
+    #[test]
+    fn nixie_tubes_default_to_the_slot_machine() {
+        use crate::effects::Kind;
+        use clap::Parser;
+        let pools = |args: &[&str]| super::effect_pools(&crate::cli::Cli::try_parse_from(args).unwrap());
+        let nixie = pools(&["t-", "5m", "--font", "nixie"]);
+        assert_eq!(
+            (nixie.intro, nixie.replay, nixie.zero),
+            (
+                vec![Kind::Slotmachine],
+                vec![Kind::Slotmachine],
+                vec![Kind::Slotmachine]
+            )
+        );
+        // Chosen effects still count, and other fonts keep them all.
+        assert_eq!(
+            pools(&["t-", "5m", "--font", "nixie", "-e", "rain"]).replay,
+            [Kind::Rain]
+        );
+        assert_eq!(
+            pools(&["t-", "5m", "--font", "nixie", "--zero-effect", "burn"]).zero,
+            [Kind::Burn]
+        );
+        assert!(pools(&["t-", "5m"]).replay.len() > 30);
     }
 
     #[test]

@@ -168,7 +168,7 @@ pub struct Cli {
     pub title_size: TitleSize,
 
     /// Effects to use, comma-separated, or none (see --list-effects)
-    /// [default: all but matrix-heavy, picked at random]
+    /// [default: all but matrix-heavy, picked at random; slotmachine with --font nixie]
     // `Set` (not the default `Append`) so a command-line --effect replaces the config's list.
     // The names are left out of --help (all 39, three times); --list-effects has them,
     // and shell completion still offers them.

@@ -40,7 +40,8 @@ that replay every so often.
   `--nixie-color theme` (or `theme-solid`, one color; `theme-heavy`,
   drifting) and `--background dark` change the look.
   The `slotmachine` effect runs every tube through all ten digits, like a
-  nixie clock keeping its cathodes healthy (`--effect slotmachine` to use only it).
+  nixie clock keeping its cathodes healthy; it's the only effect with nixie tubes
+  unless you pick others with `--effect`.
   Letters for `--done-text` (wrapped onto several lines if long), titles and
   `2d`/`1h 05m` go in symbol tubes inspired by the IN-15.
 - Tenths/hundredths of a second, a progress bar, large or small titles, and
