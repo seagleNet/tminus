@@ -10,6 +10,9 @@ pub struct Glyphs {
     pub chars: Vec<char>,
     /// For each cell, the index of the input character it was drawn from.
     pub owner: Vec<usize>,
+    /// The tubes, for the nixie font: the clock's, and the title's under it.
+    pub nixie: Option<crate::nixie::Layout>,
+    pub nixie_title: Option<crate::nixie::Layout>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, clap::ValueEnum)]
@@ -22,6 +25,8 @@ pub enum FontKind {
     Block,
     /// Plain text.
     Plain,
+    /// Nixie tubes (see the nixie options).
+    Nixie,
 }
 
 // ANSI Shadow digits. Each row of a glyph has the same width.
@@ -211,7 +216,14 @@ pub fn block(text: &str, scale: usize) -> Glyphs {
             owner.push(px_owner[x / scale]);
         }
     }
-    Glyphs { w: pw, h, chars, owner }
+    Glyphs {
+        w: pw,
+        h,
+        chars,
+        owner,
+        nixie: None,
+        nixie_title: None,
+    }
 }
 
 /// One line of text. Double-width chars take two cells (the second is a
@@ -244,6 +256,8 @@ fn from_rows(rows: &[Vec<(char, usize)>]) -> Glyphs {
         h: rows.len(),
         chars,
         owner,
+        nixie: None,
+        nixie_title: None,
     }
 }
 
@@ -266,13 +280,40 @@ pub fn stack(top: &Glyphs, gap: usize, bottom: &Glyphs) -> (Glyphs, usize) {
         let (r, c) = (i / bottom.w, i % bottom.w);
         chars[(by + r) * w + bx + c] = bottom.chars[i];
     }
-    (Glyphs { w, h, chars, owner }, by)
+    let nixie = top.nixie.clone().map(|mut n| {
+        n.dx += tx;
+        n
+    });
+    let nixie_title = bottom.nixie.clone().map(|mut n| {
+        n.dx += bx;
+        n.dy += by;
+        n
+    });
+    (
+        Glyphs {
+            w,
+            h,
+            chars,
+            owner,
+            nixie,
+            nixie_title,
+        },
+        by,
+    )
 }
 
 /// Render `text` with `kind`, falling back to smaller fonts if it won't fit
 /// in `max_w` x `max_h`.
 /// With `scale`, the block font is used at exactly that size if it fits.
-pub fn render(text: &str, kind: FontKind, max_w: usize, max_h: usize, scale: Option<usize>) -> Glyphs {
+pub fn render(
+    text: &str,
+    kind: FontKind,
+    max_w: usize,
+    max_h: usize,
+    scale: Option<usize>,
+    nixie: crate::nixie::Style,
+    wrap: bool,
+) -> Glyphs {
     let fits = |g: &Glyphs| g.w <= max_w && g.h <= max_h;
     if let Some(s) = scale {
         let g = block(text, s);
@@ -282,6 +323,13 @@ pub fn render(text: &str, kind: FontKind, max_w: usize, max_h: usize, scale: Opt
     }
     // Text the chosen font can't draw (e.g. a word for --done-text) goes to the
     // block font, which has letters, or else plain text.
+    let kind = match kind {
+        FontKind::Nixie => match crate::nixie::glyphs(text, max_w, max_h, nixie, wrap) {
+            Some(g) => return g,
+            None => FontKind::Auto,
+        },
+        k => k,
+    };
     let kind = match kind {
         FontKind::Shadow | FontKind::Auto if !shadow_supports(text) => FontKind::Block,
         FontKind::Block if !block_supports(text) => FontKind::Plain,
@@ -294,7 +342,7 @@ pub fn render(text: &str, kind: FontKind, max_w: usize, max_h: usize, scale: Opt
             if fits(&g) {
                 g
             } else {
-                render(text, FontKind::Auto, max_w, max_h, None)
+                render(text, FontKind::Auto, max_w, max_h, None, nixie, wrap)
             }
         }
         FontKind::Block => {
@@ -306,7 +354,7 @@ pub fn render(text: &str, kind: FontKind, max_w: usize, max_h: usize, scale: Opt
             let g = block(text, s);
             if fits(&g) { g } else { plain(text) }
         }
-        FontKind::Auto => {
+        FontKind::Auto | FontKind::Nixie => {
             let g = shadow(text);
             if fits(&g) {
                 return g;

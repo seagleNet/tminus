@@ -21,7 +21,7 @@ that replay every so often.
 - **Themes**: on Omarchy, every installed theme with its real colors (read
   from its files, so custom themes work too), defaulting to the active one;
   built-in versions of the stock themes elsewhere; and your own.
-- **Final-seconds alert**: the background pulses with each tick, and big effects
+- **Final-seconds alert**: the background (or nixie tubes) pulses with each tick, and big effects
   pause so the seconds stay readable. Effects only start if they'll finish
   before then, so short timers get short effects (a 10-second one gets none).
 - **Accurate**: duration timers keep counting through suspend (Linux and
@@ -31,6 +31,18 @@ that replay every so often.
   own presets.
 - **Remote control, Omarchy bar and Waybar**: watch and steer a timer from your bar or
   keybindings, or run it with no window at all.
+- **Nixie tubes** (`--font nixie`): thin neon wire digits after the IN-8-2,
+  drawn as true-color half-block pixels (small tubes as crisp octant wires
+  without glass, in terminals that draw them, `--small-tubes`), with glass,
+  unlit cathodes behind the lit one, glow, and a crossfade as digits change. Each part can be switched
+  off (`--no-glass`, `--unlit 0`, `--glow 0`, `--separator none`);
+  `--separator dot`, `--blink`, `--glass-tip`, `--flicker`, `--brightness`,
+  `--nixie-color theme` (or `theme-solid`, one color; `theme-heavy`,
+  drifting) and `--background dark` change the look.
+  The `slotmachine` effect runs every tube through all ten digits, like a
+  nixie clock keeping its cathodes healthy (`--effect slotmachine` to use only it).
+  Letters for `--done-text` (wrapped onto several lines if long), titles and
+  `2d`/`1h 05m` go in symbol tubes inspired by the IN-15.
 - Tenths/hundredths of a second, a progress bar, large or small titles, and
   overtime counting after zero.
 
@@ -79,6 +91,7 @@ t- 25m --effect-align 30          # effects finish exactly as the clock hits :30
                                   #   (--every is rounded up to a multiple of it)
 t- 25m --done-text BREAK          # a big word instead of 00:00 at the end
 t- 3h --hide-seconds              # 2h 59m instead of 2:59:59
+t- 25m --font nixie --flicker     # nixie tubes (see --help for their options)
 t- 25m --sound ~/ding.ogg --exec 'hyprctl notify 1 5000 0 "done"'   # at zero
 t- --until 9:00 --status-pos bottom --status-align right   # status line in the corner
 t- 25m --exit && notify-send "break time"
@@ -227,6 +240,9 @@ alert = 15
 status-pos = "bottom"
 status-align = "right"
 status-time = "now"     # or "left", "off"
+font = "nixie"
+glow = 80               # nixie glow, 0-100
+background = "dark"     # or "terminal", "theme"
 name = "work"           # timers are called work, then eager-work, ...
 
 [presets]

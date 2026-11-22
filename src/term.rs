@@ -23,12 +23,23 @@ const COLOR_TOLERANCE: u8 = 3;
 pub struct Cell {
     pub ch: char,
     pub fg: Rgb,
+    /// This cell's own background (the nixie font's lower pixel); `None` shows
+    /// the frame's.
+    pub bg: Option<Rgb>,
 }
 
 impl Cell {
     fn looks_like(self, other: Cell) -> bool {
-        let near = |a: u8, b: u8| a.abs_diff(b) <= COLOR_TOLERANCE;
-        self.ch == other.ch && near(self.fg.0, other.fg.0) && near(self.fg.1, other.fg.1) && near(self.fg.2, other.fg.2)
+        let near = |a: Rgb, b: Rgb| {
+            let n = |a: u8, b: u8| a.abs_diff(b) <= COLOR_TOLERANCE;
+            n(a.0, b.0) && n(a.1, b.1) && n(a.2, b.2)
+        };
+        let bg = match (self.bg, other.bg) {
+            (None, None) => true,
+            (Some(a), Some(b)) => near(a, b),
+            _ => false,
+        };
+        self.ch == other.ch && near(self.fg, other.fg) && bg
     }
 }
 
@@ -37,7 +48,7 @@ pub fn str_width(s: &str) -> i32 {
     s.chars().map(|c| c.width().unwrap_or(0) as i32).sum()
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Frame {
     pub w: i32,
     pub h: i32,
@@ -61,25 +72,51 @@ impl Frame {
         self.cells.fill(None);
     }
 
-    fn set(&mut self, x: i32, y: i32, cell: Option<Cell>) {
+    /// The characters drawn, row by row (for tests).
+    #[cfg(test)]
+    pub fn chars(&self) -> String {
+        self.cells.iter().map(|c| c.map_or(' ', |c| c.ch)).collect()
+    }
+
+    /// Put a whole cell, background included (`None` clears it).
+    pub fn set(&mut self, x: i32, y: i32, cell: Option<Cell>) {
         if x >= 0 && y >= 0 && x < self.w && y < self.h {
             self.cells[(y * self.w + x) as usize] = cell;
         }
     }
 
+    fn bg_at(&self, x: i32, y: i32) -> Option<Rgb> {
+        if x >= 0 && y >= 0 && x < self.w && y < self.h {
+            self.cells[(y * self.w + x) as usize].and_then(|c| c.bg)
+        } else {
+            None
+        }
+    }
+
     /// Put one char. Double-width chars also claim the cell to their right;
-    /// one that would hang off the right edge is dropped.
+    /// one that would hang off the right edge is dropped. A background
+    /// already in the cell (nixie glass behind an effect) is kept.
     pub fn put(&mut self, x: i32, y: i32, ch: char, fg: Rgb) {
+        let bg = self.bg_at(x, y);
         match ch {
             WIDE_TAIL => {}
-            ' ' => self.set(x, y, None),
+            ' ' => self.set(x, y, bg.map(|bg| Cell { ch, fg, bg: Some(bg) })),
             _ if ch.width() == Some(2) => {
                 if x + 1 < self.w {
-                    self.set(x, y, Some(Cell { ch, fg }));
-                    self.set(x + 1, y, Some(Cell { ch: WIDE_TAIL, fg }));
+                    let bg2 = self.bg_at(x + 1, y);
+                    self.set(x, y, Some(Cell { ch, fg, bg }));
+                    self.set(
+                        x + 1,
+                        y,
+                        Some(Cell {
+                            ch: WIDE_TAIL,
+                            fg,
+                            bg: bg2,
+                        }),
+                    );
                 }
             }
-            _ => self.set(x, y, Some(Cell { ch, fg })),
+            _ => self.set(x, y, Some(Cell { ch, fg, bg })),
         }
     }
 
@@ -232,6 +269,8 @@ impl Term {
         let shown = self.shown.as_mut().expect("set above when missing");
         let mut cur: Option<(i32, i32)> = None;
         let mut color: Option<Rgb> = None;
+        // The background in effect: `Some(None)` is the terminal's default.
+        let mut back: Option<Option<Rgb>> = full.then_some(f.bg);
         for y in 0..f.h {
             for x in 0..f.w {
                 let i = (y * f.w + x) as usize;
@@ -258,6 +297,12 @@ impl Term {
                 }
                 if cur != Some((x, y)) {
                     queue!(self.out, cursor::MoveTo(x as u16, y as u16))?;
+                }
+                let want = new.and_then(|c| c.bg).or(f.bg);
+                if back != Some(want) {
+                    let color = want.map_or(Color::Reset, |Rgb(r, g, b)| Color::Rgb { r, g, b });
+                    queue!(self.out, SetBackgroundColor(color))?;
+                    back = Some(want);
                 }
                 let mut advance = 1;
                 match new {

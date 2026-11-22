@@ -14,6 +14,12 @@ use crate::{scene::Scene, term::Frame, theme::Rgb};
 pub trait Effect {
     /// Draw the effect at `t` seconds after it started. Returns true when done.
     fn draw(&mut self, sc: &Scene, t: f32, f: &mut Frame) -> bool;
+
+    /// True if it draws the whole nixie tubes itself, glow included (rather
+    /// than playing the wires over the glass).
+    fn keeps_tubes(&self) -> bool {
+        false
+    }
 }
 
 /// The available effects; clap derives the CLI names (`decrypt`, `rain`, ...).
@@ -59,13 +65,16 @@ pub enum Kind {
     Thunderstorm,
     Unstable,
     Vhstape,
+    /// Nixie font only: every tube runs through all ten digits, like a nixie
+    /// clock keeping its cathodes healthy
+    Slotmachine,
     /// No effect at all
     #[value(name = "none")]
     Off,
 }
 
 /// The effect names for `--list-effects`, one per line. In a terminal, ones
-/// with a note (`matrix`, `matrix-heavy`, `none`) get it beside them, dimmed;
+/// with a note (`matrix`, `matrix-heavy`, `slotmachine`, `none`) get it beside them, dimmed;
 /// piped, it's plain names for scripts.
 pub fn list(color: bool) -> String {
     use clap::ValueEnum;
@@ -117,6 +126,7 @@ impl Kind {
     pub fn max_duration(self) -> f32 {
         match self {
             Kind::Off => 0.0,
+            Kind::Slotmachine => crate::nixie::SLOT_MAX,
             Kind::Expand => 1.2,
             Kind::Highlight => 1.5,
             Kind::Middleout => 1.8,
@@ -131,9 +141,10 @@ impl Kind {
             Kind::Pour | Kind::Rain => 2.8,
             Kind::Waves => 2.9,
             Kind::Burn | Kind::Bouncyballs | Kind::Colorshift | Kind::Laseretch | Kind::Smoke | Kind::Spray => 3.1,
-            Kind::Beams | Kind::Orbittingvolley | Kind::Synthgrid | Kind::Vhstape => 3.3,
+            Kind::Orbittingvolley | Kind::Synthgrid | Kind::Vhstape => 3.3,
             Kind::Binarypath | Kind::Errorcorrect => 3.4,
-            Kind::Decrypt | Kind::Crumble | Kind::Spotlights => 3.5,
+            // Beams: its closing wipe takes longer on wide clocks (nixie tubes).
+            Kind::Beams | Kind::Decrypt | Kind::Crumble | Kind::Spotlights => 3.5,
             Kind::Unstable => 3.6,
             Kind::Bubbles | Kind::Thunderstorm => 3.7,
             Kind::Swarm => 4.3,
@@ -196,6 +207,7 @@ pub fn measure(kind: Kind, sc: &Scene, seed: u64) -> f32 {
 pub fn make(kind: Kind, sc: &Scene, rng: &mut impl Rng) -> Box<dyn Effect> {
     match kind {
         Kind::Off => Box::new(Settled),
+        Kind::Slotmachine => crate::nixie::slot_machine(),
         Kind::Beams => light::beams(sc, rng),
         Kind::Binarypath => motion::binarypath(sc, rng),
         Kind::Blackhole => motion::blackhole(sc, rng),
@@ -297,7 +309,12 @@ mod tests {
     fn effects_fit_their_durations() {
         const SHORT: f32 = 5.0;
         let themes = theme::builtin();
-        let layouts = [(font::shadow("24:59"), 120, 36), (font::block("1:24:59", 3), 220, 64)];
+        let nixie = crate::nixie::glyphs("24:59", 120, 36, crate::nixie::Style::default(), false).expect("fits");
+        let layouts = [
+            (font::shadow("24:59"), 120, 36),
+            (font::block("1:24:59", 3), 220, 64),
+            (nixie, 120, 36),
+        ];
         let mut report = vec![];
         for (g, sw, sh) in layouts {
             let mut target = Target::empty();
@@ -314,6 +331,10 @@ mod tests {
                 done: false,
                 tick_fx: true,
                 urgency: 0.0,
+                rest: themes[0].bg,
+                glow_k: 1.0,
+                blink_dark: false,
+                pulse: 0.0,
             };
             for &kind in Kind::value_variants() {
                 for seed in 0..3 {
@@ -344,6 +365,7 @@ mod tests {
     #[test]
     #[ignore = "a measuring tool, not a check"]
     fn measure_durations() {
+        let nixie = |t, w, h| crate::nixie::glyphs(t, w, h, crate::nixie::Style::default(), false).expect("fits");
         let themes = theme::builtin();
         let layouts = [
             (font::shadow("24:59"), 80, 24),
@@ -351,6 +373,9 @@ mod tests {
             (font::shadow("1:24:59"), 200, 50),
             (font::block("1:24:59", 3), 220, 64),
             (font::block("59", 6), 120, 60),
+            (nixie("24:59", 120, 36), 120, 36),
+            (nixie("1:24:59", 220, 64), 220, 64),
+            (nixie("59", 80, 24), 80, 24),
         ];
         for &kind in Kind::value_variants() {
             let mut worst: f32 = 0.0;
@@ -362,6 +387,8 @@ mod tests {
                         h: g.h,
                         chars: g.chars.clone(),
                         owner: g.owner.clone(),
+                        nixie: g.nixie.clone(),
+                        nixie_title: g.nixie_title.clone(),
                     },
                     0.0,
                     usize::MAX,
@@ -378,6 +405,10 @@ mod tests {
                     done: false,
                     tick_fx: true,
                     urgency: 0.0,
+                    rest: themes[0].bg,
+                    glow_k: 1.0,
+                    blink_dark: false,
+                    pulse: 0.0,
                 };
                 for seed in 0..5 {
                     let mut fx = make(kind, &sc, &mut StdRng::seed_from_u64(seed));
@@ -403,6 +434,11 @@ mod tests {
             (font::shadow("12:34"), 80, 24),
             (font::plain("0:01"), 10, 3),
             (font::block("59:59", 3), 120, 40),
+            (
+                crate::nixie::glyphs("12:34.5", 120, 40, crate::nixie::Style::default(), false).expect("fits"),
+                120,
+                40,
+            ),
             // `--done-text ""`: nothing to show.
             (font::plain(""), 80, 24),
             // A terminal that reports no size yet.
@@ -427,6 +463,10 @@ mod tests {
                         done: false,
                         tick_fx: true,
                         urgency: 0.0,
+                        rest: themes[0].bg,
+                        glow_k: 1.0,
+                        blink_dark: false,
+                        pulse: 0.0,
                     };
                     let mut rng = StdRng::seed_from_u64(seed);
                     let mut fx = make(kind, &sc, &mut rng);

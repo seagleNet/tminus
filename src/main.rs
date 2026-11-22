@@ -5,6 +5,7 @@ mod config;
 mod control;
 mod effects;
 mod font;
+mod nixie;
 mod plan;
 mod scene;
 mod term;

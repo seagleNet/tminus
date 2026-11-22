@@ -4,7 +4,11 @@ use std::{path::PathBuf, time::Duration};
 
 use clap::{Parser, Subcommand};
 
-use crate::{effects, font::FontKind};
+use crate::{
+    effects,
+    font::FontKind,
+    nixie::{Separator, SmallTubes, Tint},
+};
 
 /// Keybindings shown in the `h` popup. `--help` lists the same keys; a test
 /// keeps the two in sync.
@@ -38,6 +42,17 @@ pub const DEMO_KEYS: &[(&str, &str)] = &[
 pub enum TitleSize {
     Large,
     Small,
+}
+
+/// What fills the screen behind the clock.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, clap::ValueEnum)]
+pub enum Background {
+    /// The terminal's own (transparency included)
+    Terminal,
+    /// Near black
+    Dark,
+    /// The theme's background color
+    Theme,
 }
 
 /// Where the status line (`until ...`, `paused`, `time's up`) goes.
@@ -191,6 +206,61 @@ pub struct Cli {
     #[arg(short, long, value_enum, default_value_t = FontKind::Auto)]
     pub font: FontKind,
 
+    /// What fills the screen behind the clock
+    #[arg(long, value_enum, default_value_t = Background::Terminal, value_name = "WHAT")]
+    pub background: Background,
+
+    /// Don't draw glass tubes around the digits
+    #[arg(long, overrides_with = "glass", help_heading = "Nixie font")]
+    pub no_glass: bool,
+    #[arg(long, hide = true, overrides_with = "no_glass")]
+    pub glass: bool,
+
+    /// Give the glass a small tip on top, where a real tube was sealed
+    #[arg(long, overrides_with = "no_glass_tip", help_heading = "Nixie font")]
+    pub glass_tip: bool,
+    #[arg(long, hide = true, overrides_with = "glass_tip")]
+    pub no_glass_tip: bool,
+
+    /// How strongly the unlit symbols behind the lit one show (0 = not at all)
+    #[arg(long, default_value_t = 30, value_name = "0-100", value_parser = clap::value_parser!(u8).range(0..=100),
+          help_heading = "Nixie font")]
+    pub unlit: u8,
+
+    /// How strongly the digits glow (0 = not at all)
+    #[arg(long, default_value_t = 60, value_name = "0-100", value_parser = clap::value_parser!(u8).range(0..=100),
+          help_heading = "Nixie font")]
+    pub glow: u8,
+
+    /// How bright the lit digits are, glow included (--glow sets the glow's share)
+    #[arg(long, default_value_t = 100, value_name = "1-100", value_parser = clap::value_parser!(u8).range(1..=100),
+          help_heading = "Nixie font")]
+    pub brightness: u8,
+
+    /// How small tubes are drawn: octants (crisp wires, no glow) where the terminal draws them, or half blocks
+    #[arg(long, value_enum, default_value_t = SmallTubes::Auto, value_name = "HOW", help_heading = "Nixie font")]
+    pub small_tubes: SmallTubes,
+
+    /// Color of the lit digits
+    #[arg(long, value_enum, default_value_t = Tint::Neon, value_name = "COLOR", help_heading = "Nixie font")]
+    pub nixie_color: Tint,
+
+    /// What separates hours, minutes and seconds
+    #[arg(long, value_enum, default_value_t = Separator::Colon, value_name = "STYLE", help_heading = "Nixie font")]
+    pub separator: Separator,
+
+    /// Blink the separator: lit one second, dark the next
+    #[arg(long, overrides_with = "no_blink", help_heading = "Nixie font")]
+    pub blink: bool,
+    #[arg(long, hide = true, overrides_with = "blink")]
+    pub no_blink: bool,
+
+    /// Let the digits flicker a little, like real neon
+    #[arg(long, overrides_with = "no_flicker", help_heading = "Nixie font")]
+    pub flicker: bool,
+    #[arg(long, hide = true, overrides_with = "flicker")]
+    pub no_flicker: bool,
+
     /// Don't scramble digits as they tick
     #[arg(long, overrides_with = "tick_fx")]
     pub no_tick_fx: bool,
@@ -257,7 +327,7 @@ pub struct Cli {
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=40))]
     pub scale: Option<u8>,
 
-    /// Flash the background during the last SECS seconds (0 = off). Effect replays
+    /// Flash the background (nixie: the tubes) during the last SECS seconds (0 = off). Effect replays
     /// also stop in this window (the last 10s when 0) so the seconds stay readable
     #[arg(long, default_value_t = 10.0, value_name = "SECS")]
     pub alert: f64,
@@ -671,7 +741,7 @@ mod tests {
                 .collect()
         };
         assert_eq!(complete("--fo"), ["--font"]);
-        assert_eq!(complete("--font "), ["auto", "shadow", "block", "plain"]);
+        assert_eq!(complete("--font "), ["auto", "shadow", "block", "plain", "nixie"]);
         // Options after several durations, and comma-separated lists.
         assert!(complete("25m 5m --ef").contains(&"--effect".to_string()));
         assert_eq!(complete("--effect rain,bu"), ["rain,burn", "rain,bubbles"]);

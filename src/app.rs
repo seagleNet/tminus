@@ -8,13 +8,13 @@ use rand::{RngExt, seq::IndexedRandom};
 
 use crate::{
     cli::{
-        Cli, DEMO_KEYS, KEYS, StatusAlign, StatusPos, StatusTime, TitleSize, format_clock, format_coarse, format_span,
-        format_ticks, parse_duration,
+        Background, Cli, DEMO_KEYS, KEYS, StatusAlign, StatusPos, StatusTime, TitleSize, format_clock, format_coarse,
+        format_span, format_ticks, parse_duration,
     },
     clock::{Snapshot, Timer},
     control::json_str,
     effects::{self, Moment, Pools},
-    font,
+    font, nixie,
     scene::{Scene, Target, wave},
     term::{Frame, str_width},
     theme::{Rgb, Theme},
@@ -121,6 +121,30 @@ fn random_other(rng: &mut impl rand::Rng, i: usize, len: usize) -> usize {
     (i + rng.random_range(1..len)) % len
 }
 
+/// Draw the clock and title: the playing effect, else at rest. Returns true
+/// when the effect is done.
+fn draw_canvas(sc: &Scene, effect: &mut Option<(Box<dyn effects::Effect>, f64)>, now: f64, f: &mut Frame) -> bool {
+    let Some((fx, start)) = effect else {
+        sc.draw_settled(f);
+        return false;
+    };
+    // The effect plays the nixie wires; the glass stays.
+    if !fx.keeps_tubes() {
+        for nx in sc.t.nixie.iter().chain(&sc.t.nixie_title) {
+            nixie::draw(sc, nx, f, false);
+        }
+    }
+    fx.draw(sc, (now - *start) as f32, f)
+}
+
+/// Stop the playing effect; the nixie glow fades back in (from `fx_end`)
+/// after one that hid it.
+fn end_effect(effect: &mut Option<(Box<dyn effects::Effect>, f64)>, fx_end: &mut f64, now: f64) {
+    if effect.take().is_some_and(|(fx, _)| !fx.keeps_tubes()) {
+        *fx_end = now;
+    }
+}
+
 /// What a remote command asks of the main loop.
 #[derive(Debug)]
 pub enum Reply {
@@ -172,6 +196,8 @@ pub struct App<'a> {
     help: bool,
     /// Set in `--demo` mode.
     demo: Option<Demo>,
+    /// When the last effect ended (the nixie glow fades back in after it).
+    fx_end: f64,
     /// Showing a timer that runs in another process (`t- ctl attach`):
     /// its segment changes come from there (`sync`), not from `tick`.
     pub viewing: bool,
@@ -208,6 +234,7 @@ impl<'a> App<'a> {
             status_time: cli.status_time,
             help: false,
             demo,
+            fx_end: f64::NEG_INFINITY,
             viewing: false,
         };
         app.sample();
@@ -451,6 +478,7 @@ impl<'a> App<'a> {
             || (self.cli.alert > 0.0 && self.urgency() > 0.0)
             || flashing(self.finished_at)
             || flashing(self.switched_at)
+            || self.target.nixie.is_some() && (self.cli.flicker || now - self.fx_end < nixie::GLOW_FADE)
     }
 
     fn hour_width(&self) -> usize {
@@ -509,6 +537,8 @@ impl<'a> App<'a> {
             .iter()
             .copied()
             .filter(|k| k.max_duration() <= budget)
+            // Only nixie tubes have digits to run through.
+            .filter(|&k| k != effects::Kind::Slotmachine || self.target.nixie.is_some())
             .collect();
         if fits.len() > 1 {
             fits.into_iter().filter(|k| Some(*k) != self.last_effect).collect()
@@ -806,7 +836,12 @@ impl<'a> App<'a> {
         // Fraction digits change too fast for the tick scramble.
         let fx_until = text.find('.').unwrap_or(usize::MAX);
         let title = key.1.as_deref().map(|t| self.title_glyphs(t));
-        let title_h = title.as_ref().map_or(0, |g| g.h as i32 + 1);
+        // Nixie tubes need more room to tell the title from the clock or done-text.
+        let gap = match &title {
+            Some(t) if cli.font == font::FontKind::Nixie => (t.h / 2).max(3),
+            _ => 1,
+        };
+        let title_h = title.as_ref().map_or(0, |g| (g.h + gap) as i32);
         let edges = self.edge_rows().0 + self.edge_rows().1;
         let glyphs = font::render(
             text,
@@ -814,12 +849,16 @@ impl<'a> App<'a> {
             (sw - 2).max(1) as usize,
             (sh - self.footer_height() - edges - title_h - 2).max(1) as usize,
             cli.scale.map(usize::from),
+            self.nixie_style(),
+            // A done-text may wrap; the clock never does.
+            self.completed() && cli.done_text.is_some(),
         );
         let (glyphs, title_row) = match &title {
-            Some(t) => font::stack(&glyphs, 1, t),
+            Some(t) => font::stack(&glyphs, gap, t),
             None => (glyphs, usize::MAX),
         };
         self.target.title_row = title_row;
+        self.target.nixie_look = (cli.font == font::FontKind::Nixie).then(|| self.nixie_style());
         let relayout = self.target.update(glyphs, now, fx_until);
         self.layout_key = Some(key);
         relayout
@@ -859,6 +898,7 @@ impl<'a> App<'a> {
         let (top, bottom) = self.edge_rows();
         let oy = top + (sh - top - bottom - th - self.footer_height()) / 2;
 
+        let bg = self.alert_bg(now).or_else(|| self.fill());
         let sc = Scene {
             t: &self.target,
             ox,
@@ -871,11 +911,15 @@ impl<'a> App<'a> {
             done: self.finished_at.is_some(),
             tick_fx: !cli.no_tick_fx,
             urgency: self.urgency(),
+            rest: bg.or(self.term_bg).unwrap_or(self.themes[self.theme].bg),
+            glow_k: ((now - self.fx_end) / nixie::GLOW_FADE).clamp(0.0, 1.0) as f32,
+            blink_dark: self.blink_dark(),
+            pulse: self.tube_pulse(now),
         };
 
         // Keep the final seconds readable: no big effects (tick scramble stays).
         if self.in_final_seconds() {
-            self.effect = None;
+            end_effect(&mut self.effect, &mut self.fx_end, now);
             self.pending = None;
         } else if let Some(p) = self.pending.take() {
             // Start once the time left to the round number is the effect's length.
@@ -935,21 +979,16 @@ impl<'a> App<'a> {
         }
 
         self.frame.clear();
-        let done = if let Some((fx, start)) = &mut self.effect {
-            fx.draw(&sc, (now - *start) as f32, &mut self.frame)
-        } else {
-            sc.draw_settled(&mut self.frame);
-            false
-        };
+        let done = draw_canvas(&sc, &mut self.effect, now, &mut self.frame);
         if done {
-            self.effect = None;
+            end_effect(&mut self.effect, &mut self.fx_end, now);
             self.next_effect_at = self.next_replay(now);
             if let Some(demo) = self.demo.as_mut().filter(|d| d.auto) {
                 demo.step(true);
             }
         }
 
-        self.frame.bg = self.alert_bg(now);
+        self.frame.bg = bg;
         self.draw_footer(now, oy + th + 1, ox, tw);
         self.draw_demo_bar();
         if self.help {
@@ -982,32 +1021,65 @@ impl<'a> App<'a> {
         Some(mark - step).filter(|&m| m >= self.final_window())
     }
 
-    /// Background for the alert flash: a pulse on every second tick in the
-    /// final window, then rapid flashing for a few seconds after zero or a
-    /// segment change.
+    /// Background for the alert flash (not with nixie tubes, which flare
+    /// instead: `alert_pulse`).
     fn alert_bg(&self, now: f64) -> Option<Rgb> {
-        if self.cli.alert <= 0.0 || self.timer.paused() {
+        let p = self.alert_pulse(now);
+        if p <= 0.0 || self.target.nixie.is_some() {
             return None;
         }
         let theme = &self.themes[self.theme];
+        // Fade back to the fill or the terminal's real background (if it told
+        // us), so the switch at the end of the pulse doesn't show.
+        let rest = self.fill().or(self.term_bg).unwrap_or(theme.bg);
+        Some(rest.lerp(theme.alert, p))
+    }
+
+    /// The alert pulse for nixie tubes to flare with (0 with other fonts).
+    fn tube_pulse(&self, now: f64) -> f32 {
+        if self.target.nixie.is_some() {
+            self.alert_pulse(now)
+        } else {
+            0.0
+        }
+    }
+
+    /// The alert pulse, 0..1: on every second tick in the final window, then
+    /// rapid flashing for a few seconds after zero or a segment change.
+    fn alert_pulse(&self, now: f64) -> f32 {
+        if self.cli.alert <= 0.0 || self.timer.paused() {
+            return 0.0;
+        }
         let recent = |at: Option<f64>| at.filter(|at| now - at < DONE_FLASH_FOR);
         let (since_pulse, strength) = match recent(self.finished_at).or(recent(self.switched_at)) {
             Some(at) => ((((now - at) * 2.0).fract() / 2.0) as f32, 0.75),
-            None if self.finished_at.is_some() => return None,
+            None if self.finished_at.is_some() => return 0.0,
             None => {
                 let urgency = self.urgency();
                 if urgency <= 0.0 {
-                    return None;
+                    return 0.0;
                 }
                 // Seconds since the displayed second last ticked over.
                 ((1.0 - self.left.as_secs_f64().fract()) as f32, 0.25 + 0.4 * urgency)
             }
         };
         let k = (1.0 - since_pulse * 2.5).max(0.0);
-        // Fade back to the terminal's real background (if it told us), so the
-        // switch to "no fill" at the end of the pulse doesn't show.
-        let rest = self.term_bg.unwrap_or(theme.bg);
-        (k > 0.0).then(|| rest.lerp(theme.alert, k * k * strength))
+        k * k * strength
+    }
+
+    /// Whether a blinking separator is dark now: on even seconds, while running.
+    fn blink_dark(&self) -> bool {
+        let shown = self.remaining_ticks() / 10u64.pow(u32::from(self.cli.decimals));
+        !self.timer.paused() && self.finished_at.is_none() && shown.is_multiple_of(2)
+    }
+
+    /// The --background fill, `None` for the terminal's own.
+    fn fill(&self) -> Option<Rgb> {
+        match self.cli.background {
+            Background::Terminal => None,
+            Background::Dark => Some(Rgb::hex("#0c0b0b")),
+            Background::Theme => Some(self.themes[self.theme].bg),
+        }
     }
 
     /// Fraction of the progress bar to fill: this segment, or with
@@ -1143,6 +1215,8 @@ impl<'a> App<'a> {
                     (dx, _) if dx == w - 1 => '│',
                     _ => ' ',
                 };
+                // `put` keeps a background (nixie tubes); the popup covers it.
+                self.frame.set(x, y, None);
                 self.frame.put(x, y, ch, border);
             }
         }
@@ -1167,7 +1241,7 @@ impl<'a> App<'a> {
         let y0 = ((sh - n) / 2).max(0);
         for y in y0..(y0 + n).min(sh) {
             for x in 0..sw {
-                self.frame.put(x, y, ' ', theme.dim);
+                self.frame.set(x, y, None);
             }
         }
         let desc_x = 1 + key_w + 2;
@@ -1253,7 +1327,31 @@ impl<'a> App<'a> {
 
     /// The title in the 3-row block font when large (and it has only
     /// characters the font knows and fits), else as a line of text.
+    /// The nixie options.
+    fn nixie_style(&self) -> nixie::Style {
+        let cli = self.cli;
+        nixie::Style {
+            glass: !cli.no_glass,
+            glass_tip: cli.glass_tip,
+            unlit: f32::from(cli.unlit) / 100.0,
+            glow: f32::from(cli.glow) / 100.0,
+            brightness: f32::from(cli.brightness) / 100.0,
+            tint: cli.nixie_color,
+            separator: cli.separator,
+            octants: cli.small_tubes.octants(),
+            blink: cli.blink,
+            flicker: cli.flicker,
+        }
+    }
+
     fn title_glyphs(&self, title: &str) -> font::Glyphs {
+        let max_w = (self.frame.w - 4).max(0) as usize;
+        if self.title_large
+            && self.cli.font == font::FontKind::Nixie
+            && let Some(g) = nixie::title(title, max_w, self.nixie_style())
+        {
+            return g;
+        }
         if self.title_large && font::block_supports(title) && font::block_width(title, 1) as i32 <= self.frame.w - 4 {
             font::block(title, 1)
         } else {
