@@ -7,7 +7,7 @@
 //! target chars are the wires alone, as `▀▄█` (like the block font); the
 //! image is drawn when the clock is at rest.
 
-use std::{cell::RefCell, f32::consts::PI, rc::Rc};
+use std::{cell::RefCell, f32::consts::PI, rc::Rc, sync::LazyLock};
 
 use crate::{
     effects::Effect,
@@ -497,6 +497,48 @@ fn tip(p: Pt, x: f32, top: f32, len: f32, r: f32) -> f32 {
     seg_dist(p, (x, top - len + r), (x, top)) - r
 }
 
+/// The glow of one cathode's wire (`core`, its coverage over a tube `w` x `h`
+/// pixels, `s` pixels a unit): the wire blurred like a bloom pass, so
+/// crossings glow brighter and ends fade. Two Gaussians, fitted to fall off
+/// like `exp(-d / GLOW_R)` beside a straight wire, where it's 1.
+fn halo(core: &[f32], w: usize, h: usize, s: f32) -> Vec<f32> {
+    // Weight and sigma (in `GLOW_R`) of each blur.
+    const BLURS: [(f32, f32); 2] = [(0.483, 0.28), (0.517, 1.237)];
+    let width = STROKE.max(1.0 / s);
+    let mut out = vec![0.0; w * h];
+    let mut row = vec![0.0; w * h];
+    for (weight, sigma) in BLURS {
+        let sigma = sigma * GLOW_R * s;
+        let r = (3.0 * sigma).ceil() as isize;
+        let kernel: Vec<f32> = (-r..=r)
+            .map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp())
+            .collect();
+        // What a straight wire's middle comes out at, to scale that to 1.
+        let across: f32 = (-r..=r)
+            .zip(&kernel)
+            .map(|(i, k)| k * cover(i.unsigned_abs() as f32 / s, width, 1.0 / s))
+            .sum();
+        let scale = weight / (across * kernel.iter().sum::<f32>());
+        // Separable: along rows into `row`, then down columns into `out`.
+        let taps = |at: usize, n: usize| {
+            (-r..=r)
+                .zip(&kernel)
+                .filter_map(move |(i, &k)| at.checked_add_signed(i).filter(|&j| j < n).map(|j| (j, k)))
+        };
+        for y in 0..h {
+            for x in 0..w {
+                row[y * w + x] = taps(x, w).map(|(j, k)| k * core[y * w + j]).sum();
+            }
+        }
+        for y in 0..h {
+            for x in 0..w {
+                out[y * w + x] += scale * taps(y, h).map(|(j, k)| k * row[j * w + x]).sum::<f32>();
+            }
+        }
+    }
+    out
+}
+
 /// Index of the comma in a pixel's distances (after the ten digits).
 const COMMA_I: usize = 10;
 
@@ -662,9 +704,17 @@ impl Field {
                     // At least a pixel wide, or small tubes' wires come out dim and uneven.
                     core: d.map(|d| cover(d, STROKE.max(1.0 / s), 1.0 / s)),
                     unlit: d.map(|d| cover(d, STROKE * 0.6, 1.0 / s)),
-                    halo: d.map(|d| (-d / GLOW_R).exp()),
+                    halo: [0.0; 11],
                     near: d.map(|d| (-d / 0.35).exp()),
                 });
+            }
+        }
+        for k in 0..11 {
+            let core: Vec<f32> = shade.iter().map(|p| p.core[k]).collect();
+            if core.iter().any(|&c| c > 0.0) {
+                for (p, g) in shade.iter_mut().zip(halo(&core, self.w, self.h, s)) {
+                    p.halo[k] = g;
+                }
             }
         }
         let c = Rc::new(Cathodes { dist, shade });
@@ -1083,8 +1133,9 @@ fn tube_pixel(
         shown |= m > 0.01;
     }
     let g: f32 = (0..11).map(|k| lit[k] * sh.halo[k]).sum::<f32>() * glow;
+    let before = col;
     col = glow_onto(col, c, g);
-    shown |= g * 255.0 > 2.0;
+    shown |= glowed(col, before);
     let core = (0..11).map(|k| lit[k] * sh.core[k]).fold(0.0, f32::max);
     if core > 0.0 {
         col = mix(col, c.wire.lerp(c.hot, core * 0.7), core);
@@ -1093,19 +1144,57 @@ fn tube_pixel(
     shown.then(|| to_rgb(col))
 }
 
-/// A colon pixel: its dots and their glow.
-/// Glass over a pixel `sd` from its outline (< 0 inside): a faint tint, the
-/// outline, and the lamp's light on it: on the rim by `near` (how close the
-/// lit cathode is), and as a reflection streak by `streak`.
-/// Glow `g` from a lit cathode onto `col`.
+/// Glow `g` from a lit cathode onto `col`. Light adds up in linear light
+/// (adding sRGB values cuts the glow's soft tail short).
 fn glow_onto(col: [f32; 3], c: Colors, g: f32) -> [f32; 3] {
     if c.light {
         return mix(col, c.wire, (g * 0.5).min(0.6));
     }
-    let gc = [f32::from(c.glow.0), f32::from(c.glow.1), f32::from(c.glow.2)];
-    [col[0] + gc[0] * g, col[1] + gc[1] * g, col[2] + gc[2] * g]
+    let add = |v: f32, gc: u8| from_linear(to_linear(v) + to_linear(f32::from(gc)) * g);
+    [add(col[0], c.glow.0), add(col[1], c.glow.1), add(col[2], c.glow.2)]
 }
 
+/// An sRGB channel value (0..=255) in linear light (0..=1), and back, from
+/// tables: `powf` for each pixel made `theme-heavy` half as slow again.
+fn to_linear(v: f32) -> f32 {
+    static TABLE: LazyLock<[f32; 256]> = LazyLock::new(|| std::array::from_fn(|i| linear_exact(i as f32)));
+    TABLE[v.round().clamp(0.0, 255.0) as usize]
+}
+
+fn from_linear(v: f32) -> f32 {
+    const STEPS: usize = 4096;
+    static TABLE: LazyLock<Vec<f32>> =
+        LazyLock::new(|| (0..=STEPS).map(|i| srgb_exact(i as f32 / STEPS as f32)).collect());
+    // Brighter than white only clips (`to_rgb`).
+    TABLE[(v * STEPS as f32).round().clamp(0.0, STEPS as f32) as usize]
+}
+
+fn linear_exact(v: f32) -> f32 {
+    let v = (v / 255.0).max(0.0);
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn srgb_exact(v: f32) -> f32 {
+    255.0
+        * if v <= 0.003_130_8 {
+            v * 12.92
+        } else {
+            1.055 * v.powf(1.0 / 2.4) - 0.055
+        }
+}
+
+/// Whether `glow_onto` changed `col` from `before` enough to see.
+fn glowed(col: [f32; 3], before: [f32; 3]) -> bool {
+    col.iter().zip(before).any(|(a, b)| a - b > 2.0)
+}
+
+/// Glass over a pixel `sd` from its outline (< 0 inside): a faint tint, the
+/// outline, and the lamp's light on it: on the rim by `near` (how close the
+/// lit cathode is), and as a reflection streak by `streak`.
 fn glass_shade(col: [f32; 3], sd: f32, px: f32, near: f32, streak: f32, c: Colors, glow: f32) -> [f32; 3] {
     let col = if sd < 0.0 { mix(col, c.glass, 0.08) } else { col };
     // At least a pixel, and thicker on big tubes (small fonts) so it stays visible.
@@ -1136,10 +1225,12 @@ fn colon_pixel(px: f32, rest: Rgb, at: &SepPx, k: f32, c: Colors, glow: f32) -> 
         shown = true;
     }
     let g = k * (-at.d.max(0.0) / (GLOW_R * 0.8)).exp() * glow * at.edge;
+    let before = col;
     col = glow_onto(col, c, g);
+    shown |= glowed(col, before);
     let core = k * (0.5 - at.d / px).clamp(0.0, 1.0);
     col = mix(col, c.wire.lerp(c.hot, core * 0.7), core);
-    (shown || g * 255.0 > 2.0 || core > 0.0).then(|| to_rgb(col))
+    (shown || core > 0.0).then(|| to_rgb(col))
 }
 
 /// Brightness of slot `n` with --flicker. Like a real tube it's mostly
@@ -1792,6 +1883,31 @@ mod tests {
                 full as f32 > 1.5 * f.s,
                 "tube {tube_w}: only {full} pixels on the 4's wires"
             );
+        }
+    }
+
+    #[test]
+    fn glow_falls_off_like_light_from_a_wire() {
+        // A straight wire, 40 pixels down the middle of a 41 x 60 field.
+        let (w, h, s) = (41, 60, 30.0);
+        let mut core = vec![0.0; w * h];
+        for y in 10..50 {
+            for x in 0..w {
+                core[y * w + x] = cover(x.abs_diff(20) as f32 / s, STROKE, 1.0 / s);
+            }
+        }
+        let g = halo(&core, w, h, s);
+        let at = |x: usize, y: usize| g[y * w + x];
+        assert!((at(20, 30) - 1.0).abs() < 0.05, "middle {}", at(20, 30));
+        // Like exp(-d / GLOW_R) beside it...
+        let px = (2.0 * GLOW_R * s).round() as usize;
+        let beside = at(20 + px, 30);
+        assert!((beside - (-2.0f32).exp()).abs() < 0.07, "beside {beside}");
+        // ...and fading at its ends, where less wire lights a pixel.
+        assert!(at(20, 10) < 0.7 && at(20, 10) > 0.3, "end {}", at(20, 10));
+        // Linear light and back.
+        for v in [0.0, 12.0, 128.0, 255.0] {
+            assert!((from_linear(to_linear(v)) - v).abs() < 1.0, "{v}");
         }
     }
 
