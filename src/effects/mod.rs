@@ -424,6 +424,52 @@ mod tests {
         }
     }
 
+    /// Print works out the rows it types when it starts; a digit that changes
+    /// while it plays (`10:00` to `09:59`, a narrow `1` to a wide `0`) must
+    /// still come out whole.
+    #[test]
+    fn print_types_digits_that_change_while_it_plays() {
+        fn scene<'a>(t: &'a Target, theme: &'a theme::Theme) -> Scene<'a> {
+            Scene {
+                t,
+                ox: 1,
+                oy: 1,
+                sw: 120,
+                sh: 36,
+                theme,
+                now: 0.0,
+                paused: false,
+                done: false,
+                tick_fx: true,
+                urgency: 0.0,
+                rest: theme.bg,
+                rest_k: 1.0,
+                blink_dark: false,
+                pulse: 0.0,
+            }
+        }
+        let themes = theme::builtin();
+        let clock = |text| crate::nixie::glyphs(text, 118, 32, crate::nixie::Style::default(), false).expect("fits");
+        let mut target = Target::empty();
+        target.update(clock("10:00"), 0.0, usize::MAX);
+        let mut fx = make(Kind::Print, &scene(&target, &themes[0]), &mut StdRng::seed_from_u64(1));
+        target.update(clock("09:59"), 1.0, usize::MAX);
+        let sc = scene(&target, &themes[0]);
+        let mut frame = Frame::new(120, 36);
+        let mut t = 0.0;
+        loop {
+            frame.clear();
+            if fx.draw(&sc, t, &mut frame) {
+                break;
+            }
+            t += 1.0 / 60.0;
+        }
+        for i in (0..sc.len()).filter(|&i| sc.ch(i) != ' ') {
+            let (x, y) = sc.pos(i);
+            assert_eq!(frame.get(x, y).map(|c| c.ch), Some(sc.ch(i)), "cell {i} of 09:59");
+        }
+    }
+
     /// Every effect must settle: run each one frame by frame and require it to
     /// report done within a generous bound, for a few layouts and seeds.
     #[test]

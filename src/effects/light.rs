@@ -1313,8 +1313,13 @@ impl Effect for Print {
         for (r, &(start, extent)) in self.rows.iter().enumerate() {
             let Some((first, last)) = extent else { continue };
             let y = bottom - feeds(r);
-            for c in first..=last {
-                let lt = t - start - (c - first) as f32 / self.rate;
+            // A digit may have changed since (`10:00` to `09:59`): type what
+            // now reaches past the row's ends too, left of it as already typed.
+            let ink = |c: &usize| sc.ch(r * tw + c) != ' ';
+            let from = (0..tw).find(ink).map_or(first, |c| c.min(first));
+            let to = (0..tw).rev().find(ink).map_or(last, |c| c.max(last));
+            for c in from..=to {
+                let lt = t - start - (c as f32 - first as f32) / self.rate;
                 if lt < 0.0 {
                     break;
                 }
