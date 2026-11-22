@@ -50,6 +50,8 @@ that replay every so often.
 - Tenths/hundredths of a second, a progress bar, large or small titles, and
   overtime counting after zero.
 
+![The nixie tube font: tubes run through their digits (slotmachine), tick over with a crossfade, and glow green as the decrypt effect plays over them](https://raw.githubusercontent.com/seagleNet/tminus/e32fde3a7fce6b117e1ecd52db9a867950a2a17f/assets/nixie.gif)
+
 ## Install
 
 The command is called **`t-`** (as in T-minus).
