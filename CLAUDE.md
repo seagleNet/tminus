@@ -82,7 +82,12 @@ effects (highlight, colorshift, spotlights) are invisible in text snapshots.
   binaries (`release.yml`), published on crates.io (`cargo install tminus`). The README GIFs
   were re-recorded for 0.6.0 (2026-11-22, the reworked effects); `nixie.gif` added for 0.7.0.
 - Next release: bump `version` in Cargo.toml, tag `vX.Y.Z` (the push runs `release.yml`),
-  `cargo publish` from the tagged commit; bump the GIF URL tag in the README if re-recorded. `cargo publish`'s verify step builds the packaged copy into the shared `target/` and leaves `target/debug/t-` pointing at `target/package/` sources (edits then look "fresh"): run `cargo clean -p tminus` afterwards.
+  `cargo publish` from the tagged commit; bump the GIF URL tag in the README if re-recorded.
+  `release.yml` creates the release with GitHub's generated notes (a list of PRs): replace them
+  (`gh release edit vX.Y.Z --notes-file ...`) with hand-written ones like the earlier releases:
+  `## New` / `## Fixes` / `## Changes` / `## Docs` sections of short user-facing bullets (what
+  changed for someone running `t-`, options in backticks, no internals), then the
+  `**Full Changelog**: .../compare/vPREV...vX.Y.Z` line. `cargo publish`'s verify step builds the packaged copy into the shared `target/` and leaves `target/debug/t-` pointing at `target/package/` sources (edits then look "fresh"): run `cargo clean -p tminus` afterwards.
 - AUR: not submitted yet (registrations were closed). When it opens: `updpkgsums` +
   `makepkg --printsrcinfo > .SRCINFO` in `packaging/aur/`.
 - Never tested for real: Waybar itself (current Omarchy has omarchy-shell instead; `t- ctl status
