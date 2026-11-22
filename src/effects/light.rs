@@ -1242,9 +1242,13 @@ impl Effect for Decrypt {
 /// paper feeds up a line, and the print head appears and slides back to
 /// where the next row starts, then disappears.
 pub struct Print {
-    /// Per row: when typing starts, and its first and last non-blank
-    /// columns (`None`: a blank row).
-    rows: Vec<(f32, Option<(usize, usize)>)>,
+    /// Per row: when typing starts, and whether it has text. A row with text
+    /// is typed across the whole clock, so the head always starts at its
+    /// left edge (and a digit that changes meanwhile still fits); a blank
+    /// one is a keystroke.
+    rows: Vec<(f32, bool)>,
+    /// The clock's width.
+    width: usize,
     /// Characters typed a second.
     rate: f32,
     /// Per row: how long the head takes back to the next row (0: no return).
@@ -1258,21 +1262,19 @@ pub const PRINT_RETURNS: f32 = 2.0;
 
 pub fn print(sc: &Scene, _rng: &mut impl Rng) -> Box<dyn Effect> {
     let (tw, th) = (sc.tw(), sc.th());
-    let extents: Vec<Option<(usize, usize)>> = (0..th)
-        .map(|r| {
-            let ink = |c: &usize| sc.ch(r * tw + c) != ' ';
-            Some(((0..tw).find(ink)?, (0..tw).rev().find(ink)?))
-        })
-        .collect();
-    let total: usize = extents.iter().flatten().map(|(a, b)| b - a + 1).sum();
+    let text: Vec<bool> = (0..th).map(|r| (0..tw).any(|c| sc.ch(r * tw + c) != ' ')).collect();
+    let total = text.iter().filter(|&&t| t).count() * tw;
     // tte types 2 characters a frame; faster on a big clock so it stays short.
     let rate = 120.0f32.max(total as f32 / 1.8);
     // tte's head returns at 1.5 cells a frame, eased, between two rows with
     // text; all of them capped together on a tall clock.
     let mut returns: Vec<f32> = (0..th)
-        .map(|r| match (extents[r], extents.get(r + 1).copied().flatten()) {
-            (Some((_, last)), Some((first, _))) => (last.abs_diff(first) as f32 / 90.0).max(0.1),
-            _ => 0.0,
+        .map(|r| {
+            if text[r] && text.get(r + 1) == Some(&true) {
+                (tw.saturating_sub(1) as f32 / 90.0).max(0.1)
+            } else {
+                0.0
+            }
         })
         .collect();
     let sum: f32 = returns.iter().sum();
@@ -1282,24 +1284,29 @@ pub fn print(sc: &Scene, _rng: &mut impl Rng) -> Box<dyn Effect> {
         }
     }
     let mut at = 0.0;
-    let rows = extents
+    let rows = text
         .into_iter()
         .zip(&returns)
-        .map(|(extent, back)| {
+        .map(|(text, back)| {
             let start = at;
             // A blank row is one keystroke in tte, then the paper feeds.
-            at += extent.map_or(1, |(a, b)| b - a + 1) as f32 / rate + back;
-            (start, extent)
+            at += if text { tw } else { 1 } as f32 / rate + back;
+            (start, text)
         })
         .collect();
-    Box::new(Print { rows, rate, returns })
+    Box::new(Print {
+        rows,
+        width: tw,
+        rate,
+        returns,
+    })
 }
 
 impl Print {
     /// When row `r` is typed to its end (and the paper feeds).
     fn done(&self, r: usize) -> f32 {
-        let (start, extent) = self.rows[r];
-        start + extent.map_or(1, |(a, b)| b - a + 1) as f32 / self.rate
+        let (start, text) = self.rows[r];
+        start + if text { self.width } else { 1 } as f32 / self.rate
     }
 }
 
@@ -1310,16 +1317,13 @@ impl Effect for Print {
         let bottom = sc.oy + th as i32 - 1;
         // tte: each finished row but the last feeds the paper up a line.
         let feeds = |r: usize| (r..th.saturating_sub(1)).filter(|&k| self.done(k) <= t).count() as i32;
-        for (r, &(start, extent)) in self.rows.iter().enumerate() {
-            let Some((first, last)) = extent else { continue };
+        for (r, &(start, text)) in self.rows.iter().enumerate() {
+            if !text {
+                continue;
+            }
             let y = bottom - feeds(r);
-            // A digit may have changed since (`10:00` to `09:59`): type what
-            // now reaches past the row's ends too, left of it as already typed.
-            let ink = |c: &usize| sc.ch(r * tw + c) != ' ';
-            let from = (0..tw).find(ink).map_or(first, |c| c.min(first));
-            let to = (0..tw).rev().find(ink).map_or(last, |c| c.max(last));
-            for c in from..=to {
-                let lt = t - start - (c as f32 - first as f32) / self.rate;
+            for c in 0..tw {
+                let lt = t - start - c as f32 / self.rate;
                 if lt < 0.0 {
                     break;
                 }
@@ -1345,11 +1349,8 @@ impl Effect for Print {
             if back <= 0.0 || !(done..done + back).contains(&t) {
                 continue;
             }
-            let (Some((_, from)), Some((to, _))) = (self.rows[r].1, self.rows[r + 1].1) else {
-                continue;
-            };
             let p = ease_in_out_quad((t - done) / back);
-            let x = from as f32 + (to as f32 - from as f32) * p;
+            let x = self.width.saturating_sub(1) as f32 * (1.0 - p);
             f.put(sc.ox + x.round() as i32, bottom, '█', WHITE);
         }
         let end = th.checked_sub(1).map_or(0.0, |r| self.done(r));
