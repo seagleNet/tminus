@@ -78,9 +78,9 @@ effects (highlight, colorshift, spotlights) are invisible in text snapshots.
 
 ## Release status
 
-- **Released:** 0.1.0, 0.2.0, 0.3.0 (all 2026-11-12), 0.3.1 and 0.4.0 (2026-11-14), 0.5.0 (2026-11-21), 0.6.0 (2026-11-22): public repo, tags with GitHub release
+- **Released:** 0.1.0, 0.2.0, 0.3.0 (all 2026-11-12), 0.3.1 and 0.4.0 (2026-11-14), 0.5.0 (2026-11-21), 0.6.0 and 0.7.0 (2026-11-22, the nixie font): public repo, tags with GitHub release
   binaries (`release.yml`), published on crates.io (`cargo install tminus`). The README GIFs
-  were re-recorded for 0.6.0 (2026-11-22, the reworked effects).
+  were re-recorded for 0.6.0 (2026-11-22, the reworked effects); `nixie.gif` added for 0.7.0.
 - Next release: bump `version` in Cargo.toml, tag `vX.Y.Z` (the push runs `release.yml`),
   `cargo publish` from the tagged commit; bump the GIF URL tag in the README if re-recorded. `cargo publish`'s verify step builds the packaged copy into the shared `target/` and leaves `target/debug/t-` pointing at `target/package/` sources (edits then look "fresh"): run `cargo clean -p tminus` afterwards.
 - AUR: not submitted yet (registrations were closed). When it opens: `updpkgsums` +
