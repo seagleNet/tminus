@@ -1507,13 +1507,21 @@ fn bloom(sc: &Scene, nx: &Layout, base: &Frame, rest: &Frame, f: &mut Frame) {
     let glowing = nx.style.effect_glow && nx.field.m == 1 && !is_light(sc.rest);
     for (slot, cells) in slot_cells(sc, nx) {
         let settled = settled_cells(sc, &cells, f);
+        let tube = matches!(slot.lamp, Lamp::Tube { .. } | Lamp::Blank);
         if glowing
-            && matches!(slot.lamp, Lamp::Tube { .. } | Lamp::Blank)
+            && tube
             && let Some(p) = played(&cells, slot.w, base, f)
         {
             light(sc, nx, slot, &cells, &p, f);
         }
-        for (&(_, (x, y)), _) in cells.iter().zip(&settled).filter(|(_, s)| **s) {
+        // A separator lights only itself: once its dots are in place, all of
+        // it shows as at rest, glow included (as the bloom does for digits).
+        let whole = !tube
+            && cells
+                .iter()
+                .zip(&settled)
+                .all(|(&(i, _), &s)| s || sc.settled(i).is_none());
+        for (&(_, (x, y)), _) in cells.iter().zip(&settled).filter(|(_, s)| **s || whole) {
             f.set(x, y, rest.get(x, y));
         }
     }
@@ -1528,8 +1536,9 @@ fn light(sc: &Scene, nx: &Layout, slot: &Slot, cells: &[CellAt], p: &Played, f: 
     let (field, style) = (&nx.field, &nx.style);
     let (w, h, px) = (slot.w, nx.rows * 2, 1.0 / field.s);
     let lamp = style.lamp(sc.pulse);
-    // As the glow at rest: its color is the wire's at 0.55, in linear light.
-    let strength = lamp * 0.55_f32.powf(2.4);
+    // As the glow at rest: its color is the wire's at 0.55, in linear light;
+    // and 0.8, as an effect's wires are whole pixels in the hotter lit color.
+    let strength = lamp * 0.55_f32.powf(2.4) * 0.8;
     let glow = halo(&p.light, w, h, field.s, GLOW_R);
     // On the rim by how near light is (its `near` at rest), and on the
     // streak by how much the tube gives (its lit symbol's wire is all of
@@ -2335,6 +2344,12 @@ mod tests {
             under_effect(&plain_sc, f, |f| plain_sc.draw_cells(f, 0));
         });
         assert!(off(&dark) < -10.0, "glass lit by {} without effect glow", off(&dark));
+        // Separators come back whole, glow and all, once their dots are in place.
+        for (slot, cells) in slot_cells(&sc, target.nixie.as_ref().unwrap()) {
+            if slot.lamp == Lamp::Colon {
+                assert!(cells.iter().all(|&(_, (x, y))| lit.get(x, y) == rest.get(x, y)));
+            }
+        }
         // The crossfade after an effect starts from its last frame, symbols
         // and all (one cut short in the middle, say).
         let mut fx = crate::effects::make(
