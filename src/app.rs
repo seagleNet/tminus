@@ -955,6 +955,7 @@ impl<'a> App<'a> {
             let lead = self.left.as_secs_f64() - p.end_left;
             if lead <= p.dur {
                 self.effect = Some((p.fx, now - (p.dur - lead.max(0.0))));
+                self.target.sep_lit.set(0.0);
             } else {
                 self.pending = Some(p);
             }
@@ -996,6 +997,7 @@ impl<'a> App<'a> {
                     (Some(kind), None) => {
                         self.last_effect = Some(kind);
                         self.effect = Some((effects::make(kind, &sc, rng), now));
+                        self.target.sep_lit.set(0.0);
                     }
                     // Nothing fits before this mark: keep the rhythm, try the next one.
                     (None, Some(_)) if self.next_mark.is_some() => {

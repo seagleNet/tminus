@@ -28,6 +28,9 @@ pub struct Target {
     /// The nixie font's look, kept when the text falls back to another font
     /// (too long for tubes) so it keeps the tubes' colors.
     pub nixie_look: Option<crate::nixie::Style>,
+    /// How far the nixie separators have come up during the playing effect:
+    /// they only brighten (`nixie::separator`); reset as an effect starts.
+    pub sep_lit: std::cell::Cell<f32>,
 }
 
 impl Target {
@@ -41,6 +44,7 @@ impl Target {
             nixie: None,
             nixie_title: None,
             nixie_look: None,
+            sep_lit: std::cell::Cell::new(0.0),
         }
     }
 

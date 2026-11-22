@@ -1526,7 +1526,8 @@ fn bloom(sc: &Scene, nx: &Layout, base: &Frame, rest: &Frame, f: &mut Frame) {
 /// A separator under an effect (it has no glass to light): as lit as the
 /// effect has drawn its dots, against them at rest, glow and bulb included,
 /// but no further than the `digits` look (0..1 from unlit to rest), so it
-/// comes up with the numbers, the crossfade after the effect included. Anything else the effect
+/// comes up with the numbers, the crossfade after the effect included; and
+/// never back down while the effect plays. Anything else the effect
 /// draws over it stays on top.
 fn separator(sc: &Scene, cells: &[CellAt], digits: f32, base: &Frame, rest: &Frame, f: &mut Frame) {
     let lum = |c: Rgb| f32::from(c.0) + f32::from(c.1) + f32::from(c.2);
@@ -1540,7 +1541,11 @@ fn separator(sc: &Scene, cells: &[CellAt], digits: f32, base: &Frame, rest: &Fra
             }
         }
     }
-    let k = if dots > 0.0 { lit / dots } else { 0.0 }.min(digits);
+    // Only brightening, or it flickers as effects dim the digits or move the dots.
+    let k = if dots > 0.0 { lit / dots } else { 0.0 }
+        .min(digits)
+        .max(sc.t.sep_lit.get());
+    sc.t.sep_lit.set(k);
     for &(i, (x, y)) in cells {
         let (drawn, was) = (f.get(x, y), base.get(x, y));
         if drawn != was && dot(i, drawn).is_none() {
