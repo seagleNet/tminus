@@ -598,10 +598,13 @@ fn blur<const N: usize>(src: &[[f32; N]], w: usize, h: usize, sigma: f32) -> Vec
             let Some(from) = y.checked_add_signed(i).filter(|&y| y < h && lit[y]) else {
                 continue;
             };
-            for (to, v) in to.iter_mut().zip(&row[from * w..(from + 1) * w]) {
-                for c in 0..N {
-                    to[c] += kv * v[c];
-                }
+            // As flat runs of floats, so it vectorizes.
+            for (to, v) in to
+                .as_flattened_mut()
+                .iter_mut()
+                .zip(row[from * w..(from + 1) * w].as_flattened())
+            {
+                *to += kv * v;
             }
         }
     }
