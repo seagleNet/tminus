@@ -48,6 +48,50 @@ impl Rgb {
         Rgb(f(self.0, other.0), f(self.1, other.1), f(self.2, other.2))
     }
 
+    /// tte's `adjust_color_brightness`: scale the HLS lightness by `k`,
+    /// keeping hue and saturation.
+    #[allow(clippy::float_cmp, reason = "max is exactly one of r, g, b")]
+    pub fn brightness(self, k: f32) -> Rgb {
+        let [r, g, b] = [self.0, self.1, self.2].map(|v| f32::from(v) / 255.0);
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let l = max.midpoint(min);
+        let (h, s) = if max == min {
+            (0.0, 0.0)
+        } else {
+            let d = max - min;
+            let s = if l > 0.5 {
+                d / (2.0 - max - min)
+            } else {
+                d / (max + min)
+            };
+            let h = if max == r {
+                (g - b) / d + if g < b { 6.0 } else { 0.0 }
+            } else if max == g {
+                (b - r) / d + 2.0
+            } else {
+                (r - g) / d + 4.0
+            };
+            (h / 6.0, s)
+        };
+        let l = (l * k).clamp(0.0, 1.0);
+        let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+        let p = 2.0 * l - q;
+        let channel = |t: f32| {
+            let t = t.rem_euclid(1.0);
+            let v = if t < 1.0 / 6.0 {
+                p + (q - p) * 6.0 * t
+            } else if t < 0.5 {
+                q
+            } else if t < 2.0 / 3.0 {
+                p + (q - p) * (2.0 / 3.0 - t) * 6.0
+            } else {
+                p
+            };
+            (v * 255.0).round() as u8
+        };
+        Rgb(channel(h + 1.0 / 3.0), channel(h), channel(h - 1.0 / 3.0))
+    }
+
     pub fn scale(self, k: f32) -> Rgb {
         let f = |a: u8| (f32::from(a) * k).clamp(0.0, 255.0) as u8;
         Rgb(f(self.0), f(self.1), f(self.2))
@@ -521,6 +565,15 @@ mod tests {
         assert_eq!(Rgb::parse("#f80"), Ok(Rgb(255, 136, 0)));
         assert!(Rgb::parse("#ff80").is_err());
         assert!(Rgb::parse("orange").is_err());
+    }
+
+    #[test]
+    fn brightness_scales_lightness() {
+        // Gray stays gray; a color keeps its hue and gets lighter or darker.
+        assert_eq!(Rgb(100, 100, 100).brightness(0.5), Rgb(50, 50, 50));
+        assert_eq!(Rgb(255, 0, 0).brightness(0.5), Rgb(128, 0, 0));
+        assert_eq!(Rgb(255, 0, 0).brightness(1.5), Rgb(255, 128, 128));
+        assert_eq!(Rgb(0, 0, 0).brightness(2.0), Rgb(0, 0, 0));
     }
 
     #[test]

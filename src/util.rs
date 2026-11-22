@@ -30,18 +30,63 @@ pub fn ease_in_quad(t: f32) -> f32 {
     t * t
 }
 
-pub fn ease_in_out_cubic(t: f32) -> f32 {
+pub fn ease_in_cubic(t: f32) -> f32 {
+    t.clamp(0.0, 1.0).powi(3)
+}
+
+pub fn ease_in_quart(t: f32) -> f32 {
+    t.clamp(0.0, 1.0).powi(4)
+}
+
+pub fn ease_in_out_quad(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     if t < 0.5 {
-        4.0 * t * t * t
+        2.0 * t * t
     } else {
-        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+        1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
     }
+}
+
+pub fn ease_in_out_quart(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 {
+        8.0 * t.powi(4)
+    } else {
+        1.0 - (-2.0 * t + 2.0).powi(4) / 2.0
+    }
+}
+
+pub fn ease_in_out_circ(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 {
+        (1.0 - (1.0 - (2.0 * t).powi(2)).sqrt()) / 2.0
+    } else {
+        (1.0 - (-2.0 * t + 2.0).powi(2)).sqrt().midpoint(1.0)
+    }
+}
+
+/// When `ease` (increasing from 0 to 1) reaches `y`: the time a sequence
+/// paced by it gets to item `y` of 0..1.
+pub fn ease_inverse(ease: fn(f32) -> f32, y: f32) -> f32 {
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..24 {
+        let mid = lo.midpoint(hi);
+        if ease(mid) < y { lo = mid } else { hi = mid }
+    }
+    hi
 }
 
 pub fn ease_out_expo(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     if t >= 1.0 { 1.0 } else { 1.0 - 2f32.powf(-10.0 * t) }
+}
+
+pub fn ease_out_circ(t: f32) -> f32 {
+    (1.0 - (t.clamp(0.0, 1.0) - 1.0).powi(2)).sqrt()
+}
+
+pub fn ease_out_quint(t: f32) -> f32 {
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(5)
 }
 
 pub fn ease_out_sine(t: f32) -> f32 {
@@ -93,29 +138,5 @@ pub fn ease_out_bounce(t: f32) -> f32 {
     } else {
         let t = t - 2.625 / d;
         n * t * t + 0.984_375
-    }
-}
-
-/// Cells on the straight line from `a` to `b` (Bresenham), both included.
-pub fn line(a: (i32, i32), b: (i32, i32)) -> Vec<(i32, i32)> {
-    let (mut x, mut y) = a;
-    let (dx, dy) = ((b.0 - x).abs(), -(b.1 - y).abs());
-    let (sx, sy) = ((b.0 - x).signum(), (b.1 - y).signum());
-    let mut err = dx + dy;
-    let mut out = Vec::with_capacity((dx - dy) as usize + 1);
-    loop {
-        out.push((x, y));
-        if (x, y) == b {
-            return out;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
     }
 }

@@ -28,7 +28,7 @@ MSRV job; it must stay green. `release.yml` runs on `v*` tags.
 - `clock.rs`: `Timer` (suspend-aware `BootInstant`; wall-clock mode for `--until`), `--until` parsing incl. DST
 - `config.rs`: `~/.config/tminus/config.toml` turned into CLI args (plus `[themes.*]`, `[presets]`)
 - `control.rs`: Unix-socket remote control (`t- ctl status [--follow]`, `t- ctl list`, `t- ctl attach [--take]`, `t- ctl <command>`)
-- `effects/`: `mod.rs` (Kind enum, pools, `make`, `max_duration`, `measure`, original effects), `motion.rs` and `light.rs` (effects ported from TerminalTextEffects)
+- `effects/`: `mod.rs` (Kind enum, pools, `make`, `max_duration`, `measure`, shared helpers), `motion.rs` (effects where characters travel, many through `Travel`) and `light.rs` (effects in place); all ported from TerminalTextEffects
 - `scene.rs` (clock canvas and settled look), `term.rs` (frame buffer and diffing presenter), `font.rs`, `theme.rs`, `util.rs`
 
 ## Design rules (non-obvious; keep them)
@@ -53,7 +53,7 @@ MSRV job; it must stay green. `release.yml` runs on `v*` tags.
 
 ## Effects and attribution
 
-The 26 effects in `effects/motion.rs` / `effects/light.rs` are adaptations of
+All 37 effects (in `effects/motion.rs` / `effects/light.rs`) are adaptations of
 TerminalTextEffects (MIT, © ChrisBuilds) via its Rust port ttfx (MIT, © 37signals),
 which Omarchy's screensaver uses. Keep the notices in `LICENSE` and the README
 credits. They are re-implementations of the documented designs (palettes, symbols,
